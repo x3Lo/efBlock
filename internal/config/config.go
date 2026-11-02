@@ -11,7 +11,24 @@ import (
 
 // Config est la racine du fichier de configuration.
 type Config struct {
-	DNS DNS `yaml:"dns"`
+	DNS    DNS    `yaml:"dns"`
+	Filter Filter `yaml:"filter"`
+}
+
+// Filter regroupe les réglages du blocage.
+type Filter struct {
+	DataDir        string        `yaml:"data_dir"`        // cache des listes téléchargées
+	BlockMode      string        `yaml:"block_mode"`      // "zero_ip" ou "nxdomain"
+	UpdateInterval time.Duration `yaml:"update_interval"` // fréquence de mise à jour des listes
+	Lists          []List        `yaml:"lists"`
+	Allowlist      []string      `yaml:"allowlist"` // domaines jamais bloqués
+	Blocklist      []string      `yaml:"blocklist"` // domaines toujours bloqués
+}
+
+// List est une liste de filtres : URL http(s) ou chemin de fichier local.
+type List struct {
+	Name string `yaml:"name"`
+	URL  string `yaml:"url"`
 }
 
 // DNS regroupe les réglages du serveur DNS.
@@ -39,6 +56,30 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.DNS.Timeout == 0 {
 		cfg.DNS.Timeout = 3 * time.Second
+	}
+
+	if cfg.Filter.DataDir == "" {
+		cfg.Filter.DataDir = "./data"
+	}
+	if cfg.Filter.BlockMode == "" {
+		cfg.Filter.BlockMode = "zero_ip"
+	}
+	if cfg.Filter.BlockMode != "zero_ip" && cfg.Filter.BlockMode != "nxdomain" {
+		return nil, fmt.Errorf("filter.block_mode: %q invalide (zero_ip ou nxdomain)", cfg.Filter.BlockMode)
+	}
+	if cfg.Filter.UpdateInterval == 0 {
+		cfg.Filter.UpdateInterval = 24 * time.Hour
+	}
+	if cfg.Filter.UpdateInterval < time.Minute {
+		return nil, fmt.Errorf("filter.update_interval: minimum 1m")
+	}
+	for i, l := range cfg.Filter.Lists {
+		if l.URL == "" {
+			return nil, fmt.Errorf("filter.lists[%d]: url manquante", i)
+		}
+		if l.Name == "" {
+			cfg.Filter.Lists[i].Name = l.URL
+		}
 	}
 
 	if len(cfg.DNS.Upstreams) == 0 {

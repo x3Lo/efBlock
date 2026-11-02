@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/x3Lo/efBlock/internal/config"
 	"github.com/x3Lo/efBlock/internal/dnsserver"
+	"github.com/x3Lo/efBlock/internal/filter"
 	"github.com/x3Lo/efBlock/internal/upstream"
 )
 
@@ -30,8 +32,26 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Moteur de filtrage : allowlist/blocklist perso + listes téléchargées.
+	engine := filter.NewEngine()
+	if n := engine.SetUserRules(cfg.Filter.Allowlist, cfg.Filter.Blocklist); n > 0 {
+		slog.Warn("entrées invalides ignorées dans allowlist/blocklist", "nombre", n)
+	}
+	var sources []filter.Source
+	for _, l := range cfg.Filter.Lists {
+		sources = append(sources, filter.Source{Name: l.Name, URL: l.URL})
+	}
+	updater := filter.NewUpdater(engine, sources, cfg.Filter.DataDir, cfg.Filter.UpdateInterval)
+
 	fwd := upstream.New(cfg.DNS.Upstreams, cfg.DNS.Timeout)
-	srv := dnsserver.New(cfg.DNS.Listen, fwd)
+	srv := dnsserver.New(cfg.DNS.Listen, fwd, engine, cfg.Filter.BlockMode == "nxdomain")
+
+	// ctx est annulé à l'arrêt : il stoppe proprement la mise à jour des listes.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Les listes se chargent en arrière-plan : le DNS répond dès le démarrage.
+	go updater.Run(ctx)
 
 	// Arrêt propre sur Ctrl+C ou `systemctl stop` (SIGTERM).
 	go func() {
@@ -39,6 +59,7 @@ func main() {
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
 		slog.Info("arrêt demandé")
+		cancel()
 		srv.Shutdown()
 	}()
 

@@ -12,3 +12,28 @@ dns:
 
   # Délai max d'attente d'une réponse amont.
   timeout: 3s
+
+filter:
+  # Dossier où sont gardées les listes téléchargées (le serveur démarre ainsi
+  # avec les listes du dernier téléchargement, même sans internet).
+  data_dir: "./data"
+
+  # zero_ip : répond 0.0.0.0 / :: (échec immédiat côté appli, mode par défaut)
+  # nxdomain : répond "ce domaine n'existe pas"
+  block_mode: zero_ip
+
+  # À quelle fréquence retélécharger les listes.
+  update_interval: 24h
+
+  # Formats acceptés : hosts, adblock simple (||domaine^), un domaine par ligne.
+  # "url" peut aussi être un chemin de fichier local.
+  lists:
+    - name: StevenBlack
+      url: https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+    - name: OISD small
+      url: https://small.oisd.nl/
+
+  # Jamais bloqués (sous-domaines inclus). Prioritaire sur tout.
+  allowlist: []
+  # Toujours bloqués (sous-domaines inclus).
+  blocklist: []
