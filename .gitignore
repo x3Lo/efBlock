@@ -1,0 +1,8 @@
+/efblock
+/bin/
+*.db
+*.db-wal
+*.db-shm
+config.yaml
+node_modules/
+.next/

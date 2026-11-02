@@ -1,0 +1,14 @@
+# efBlock : configuration d'exemple. Copie ce fichier en config.yaml.
+
+dns:
+  # Adresse d'écoute (UDP + TCP). En dev on utilise 5353 (port non privilégié).
+  # En production : ":53".
+  listen: "127.0.0.1:5353"
+
+  # Résolveurs amont, essayés dans l'ordre (le suivant prend le relais en cas d'échec).
+  upstreams:
+    - "1.1.1.1:53"
+    - "9.9.9.9:53"
+
+  # Délai max d'attente d'une réponse amont.
+  timeout: 3s
