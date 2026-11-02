@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/efBlock/efblock/internal/config"
-	"github.com/efBlock/efblock/internal/dnsserver"
-	"github.com/efBlock/efblock/internal/upstream"
+	"github.com/x3Lo/efBlock/internal/config"
+	"github.com/x3Lo/efBlock/internal/dnsserver"
+	"github.com/x3Lo/efBlock/internal/upstream"
 )
 
 func main() {

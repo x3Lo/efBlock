@@ -1,4 +1,4 @@
-module github.com/efBlock/efblock
+module github.com/x3Lo/efBlock
 
 go 1.25.0
 

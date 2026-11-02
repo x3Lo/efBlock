@@ -6,7 +6,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/efBlock/efblock/internal/upstream"
+	"github.com/x3Lo/efBlock/internal/upstream"
 )
 
 // Server est le serveur DNS d'efBlock.
