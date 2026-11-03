@@ -1,0 +1,44 @@
+[Unit]
+Description=efBlock - bloqueur de publicités DNS
+Documentation=https://github.com/x3Lo/efBlock
+# L'interface réseau (et son IP fixe) doit exister avant qu'on se mette à écouter dessus.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=efblock
+Group=efblock
+# Les données (listes, journal, état) vont dans ./data, donc /var/lib/efblock/data.
+WorkingDirectory=/var/lib/efblock
+ExecStart=/usr/local/bin/efblock -config /etc/efblock/config.yaml
+
+# Redémarre tout seul, quelle que soit la cause de l'arrêt (plantage, mémoire...).
+Restart=always
+RestartSec=2
+
+# --- Sécurité : efBlock tourne sans aucun droit superflu ---
+# Le port 53 est "privilégié" (< 1024). Plutôt que de lancer efBlock en root,
+# on lui donne UNIQUEMENT le droit d'ouvrir ces ports.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+# Système de fichiers en lecture seule, sauf son dossier de données.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/efblock
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

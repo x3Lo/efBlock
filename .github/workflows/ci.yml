@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    name: Go (vet, tests, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Formatage
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: Compilation (binaire Linux amd64 et arm64)
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o /dev/null ./cmd/efblock
+          GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/efblock
+
+  ui:
+    name: Interface (typecheck, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-ui/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build

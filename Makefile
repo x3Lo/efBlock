@@ -1,6 +1,6 @@
 # Commandes utiles. Nécessite Go (et Node seulement pour reconstruire l'interface).
 
-.PHONY: build test ui run
+.PHONY: build test ui run install
 
 # Compile le binaire (l'interface web est déjà embarquée, voir internal/web/dist).
 build:
@@ -18,3 +18,7 @@ ui:
 
 run: build
 	./efblock -debug
+
+# Installe / met à jour le service systemd (à lancer en root, après `make build`).
+install: build
+	./deploy/install.sh
