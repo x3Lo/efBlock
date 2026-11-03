@@ -1,6 +1,9 @@
 package filter
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // Reason explique une décision de filtrage (utile pour les logs et le dashboard).
 type Reason int
@@ -49,6 +52,9 @@ type Engine struct {
 	lists   atomic.Pointer[listIndex]
 	user    atomic.Pointer[userRules]
 	enabled atomic.Bool
+
+	// pausedUntil : fin d'une pause temporaire (nanosecondes Unix, 0 = pas de pause).
+	pausedUntil atomic.Int64
 }
 
 // NewEngine crée un moteur actif, sans aucune règle.
@@ -60,11 +66,39 @@ func NewEngine() *Engine {
 	return e
 }
 
-// SetEnabled active ou désactive globalement le blocage.
+// SetEnabled active ou désactive globalement le blocage (sans limite de durée).
 func (e *Engine) SetEnabled(on bool) { e.enabled.Store(on) }
 
-// Enabled indique si le blocage est actif.
-func (e *Engine) Enabled() bool { return e.enabled.Load() }
+// Pause désactive le blocage pendant d, puis il reprend tout seul.
+// Pratique quand un site légitime est cassé par un blocage : "pause 5 min".
+func (e *Engine) Pause(d time.Duration) { e.pausedUntil.Store(time.Now().Add(d).UnixNano()) }
+
+// Resume annule une pause et réactive le blocage.
+func (e *Engine) Resume() {
+	e.pausedUntil.Store(0)
+	e.enabled.Store(true)
+}
+
+// State retourne l'interrupteur général et la fin de la pause en cours
+// (zéro si aucune pause n'est en cours).
+func (e *Engine) State() (enabled bool, pausedUntil time.Time) {
+	enabled = e.enabled.Load()
+	if n := e.pausedUntil.Load(); n != 0 {
+		if t := time.Unix(0, n); t.After(time.Now()) {
+			pausedUntil = t
+		}
+	}
+	return
+}
+
+// Enabled indique si le blocage est réellement actif à cet instant.
+func (e *Engine) Enabled() bool {
+	enabled, until := e.State()
+	return enabled && until.IsZero()
+}
+
+// ValidateDomain normalise et valide un domaine saisi par l'utilisateur.
+func ValidateDomain(s string) (string, bool) { return normalizeDomain(s) }
 
 // SetUserRules remplace l'allowlist et la blocklist perso.
 // Les entrées invalides sont ignorées ; le nombre d'entrées rejetées est retourné.
@@ -105,7 +139,7 @@ func (e *Engine) Counts() (blocked, allowed int) {
 //  3. exceptions des listes  -> jamais bloqué
 //  4. listes de filtres      -> bloqué
 func (e *Engine) Check(name string) Verdict {
-	if !e.enabled.Load() {
+	if !e.Enabled() {
 		return Verdict{}
 	}
 	name = NormalizeName(name)

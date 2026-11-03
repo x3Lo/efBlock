@@ -71,3 +71,30 @@ func TestUpdaterKeepsCacheOnFailure(t *testing.T) {
 		t.Error("la copie en cache aurait dû rester active")
 	}
 }
+
+func TestPauseResumesByItself(t *testing.T) {
+	e := NewEngine()
+	e.SetUserRules(nil, []string{"ads.example.com"})
+	if !e.Check("ads.example.com").Blocked {
+		t.Fatal("devrait être bloqué avant la pause")
+	}
+
+	e.Pause(80 * time.Millisecond)
+	if e.Check("ads.example.com").Blocked || e.Enabled() {
+		t.Error("pendant la pause, rien ne doit être bloqué")
+	}
+	if _, until := e.State(); until.IsZero() {
+		t.Error("la fin de pause devrait être indiquée")
+	}
+
+	time.Sleep(120 * time.Millisecond)
+	if !e.Check("ads.example.com").Blocked {
+		t.Error("le blocage doit reprendre à la fin de la pause")
+	}
+
+	e.Pause(time.Hour)
+	e.Resume() // reprise manuelle avant l'échéance
+	if !e.Check("ads.example.com").Blocked {
+		t.Error("Resume doit réactiver le blocage")
+	}
+}

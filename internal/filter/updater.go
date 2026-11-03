@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,16 +23,34 @@ type Source struct {
 	URL  string
 }
 
+// ListStatus décrit l'état d'une liste chargée (affiché dans l'interface web).
+type ListStatus struct {
+	Name       string
+	URL        string
+	Blocked    int       // domaines à bloquer apportés par cette liste
+	Exceptions int       // exceptions (@@) apportées par cette liste
+	UpdatedAt  time.Time // dernière modification du fichier en cache
+	Error      string    // dernière erreur (téléchargement ou lecture), vide si tout va bien
+}
+
 // maxListSize protège la VM contre une URL qui renverrait un fichier énorme.
 const maxListSize = 100 << 20 // 100 Mo
 
 // Updater télécharge les listes, les garde en cache sur disque et alimente l'Engine.
+// La liste des sources peut changer à chaud (SetSources), depuis l'interface web.
 type Updater struct {
 	engine   *Engine
-	sources  []Source
 	dir      string // dossier de cache des listes
 	interval time.Duration
 	client   *http.Client
+
+	mu      sync.Mutex // protège sources et lastErr
+	sources []Source
+	lastErr map[string]string // URL -> dernière erreur de téléchargement
+
+	buildMu sync.Mutex // une seule mise à jour à la fois
+	trigger chan struct{}
+	status  atomic.Pointer[[]ListStatus]
 }
 
 // NewUpdater crée un Updater. dir est créé si besoin.
@@ -41,7 +61,40 @@ func NewUpdater(engine *Engine, sources []Source, dir string, interval time.Dura
 		dir:      dir,
 		interval: interval,
 		client:   &http.Client{Timeout: 2 * time.Minute},
+		lastErr:  map[string]string{},
+		trigger:  make(chan struct{}, 1),
 	}
+}
+
+// SetSources remplace la liste des sources. Appelle Trigger() ensuite pour
+// télécharger les nouvelles.
+func (u *Updater) SetSources(sources []Source) {
+	u.mu.Lock()
+	u.sources = append([]Source(nil), sources...)
+	u.mu.Unlock()
+}
+
+func (u *Updater) currentSources() []Source {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]Source(nil), u.sources...)
+}
+
+// Trigger demande une mise à jour immédiate (sans attendre l'intervalle).
+// Ne bloque jamais : si une demande est déjà en attente, celle-ci suffit.
+func (u *Updater) Trigger() {
+	select {
+	case u.trigger <- struct{}{}:
+	default:
+	}
+}
+
+// Status retourne l'état de chaque liste.
+func (u *Updater) Status() []ListStatus {
+	if p := u.status.Load(); p != nil {
+		return append([]ListStatus(nil), *p...)
+	}
+	return nil
 }
 
 // cachePath : nom de fichier stable dérivé de l'URL.
@@ -55,8 +108,9 @@ func isRemote(url string) bool {
 }
 
 // Run charge d'abord les listes en cache (démarrage instantané, même sans
-// internet), puis les met à jour tout de suite et à chaque intervalle.
-// Elle bloque jusqu'à l'annulation de ctx : à lancer dans une goroutine.
+// internet), puis les met à jour tout de suite, à chaque intervalle, et à
+// chaque Trigger(). Elle bloque jusqu'à l'annulation de ctx : à lancer dans
+// une goroutine.
 func (u *Updater) Run(ctx context.Context) {
 	if err := u.Rebuild(); err != nil {
 		slog.Warn("chargement du cache des listes", "err", err)
@@ -69,6 +123,7 @@ func (u *Updater) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(u.interval):
+		case <-u.trigger:
 		}
 	}
 }
@@ -77,20 +132,31 @@ func (u *Updater) Run(ctx context.Context) {
 // Si une liste échoue, la copie en cache (plus ancienne) est conservée :
 // une panne réseau ne vide jamais le filtre.
 func (u *Updater) Update(ctx context.Context) error {
+	u.buildMu.Lock()
+	defer u.buildMu.Unlock()
+
 	if err := os.MkdirAll(u.dir, 0o755); err != nil {
 		return err
 	}
 	var errs []error
-	for _, s := range u.sources {
+	for _, s := range u.currentSources() {
 		if !isRemote(s.URL) {
-			continue // fichier local : lu tel quel par Rebuild
+			continue // fichier local : lu tel quel par rebuild
 		}
-		if err := u.download(ctx, s); err != nil {
+		err := u.download(ctx, s)
+		u.mu.Lock()
+		if err != nil {
+			u.lastErr[s.URL] = err.Error()
+		} else {
+			delete(u.lastErr, s.URL)
+		}
+		u.mu.Unlock()
+		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", s.Name, err))
 			slog.Warn("téléchargement échoué, copie en cache conservée", "liste", s.Name, "err", err)
 		}
 	}
-	if err := u.Rebuild(); err != nil {
+	if err := u.rebuild(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
@@ -135,10 +201,22 @@ func (u *Updater) download(ctx context.Context, s Source) error {
 // Rebuild construit un nouvel index depuis les fichiers disponibles
 // (cache pour les URL, fichier direct pour les chemins locaux) et le publie.
 func (u *Updater) Rebuild() error {
+	u.buildMu.Lock()
+	defer u.buildMu.Unlock()
+	return u.rebuild()
+}
+
+func (u *Updater) rebuild() error {
 	idx := &listIndex{block: Set{}, allow: Set{}}
 	var errs []error
+	var statuses []ListStatus
 
-	for _, s := range u.sources {
+	for _, s := range u.currentSources() {
+		st := ListStatus{Name: s.Name, URL: s.URL}
+		u.mu.Lock()
+		st.Error = u.lastErr[s.URL]
+		u.mu.Unlock()
+
 		path := s.URL
 		if isRemote(s.URL) {
 			path = u.cachePath(s)
@@ -147,28 +225,35 @@ func (u *Updater) Rebuild() error {
 		if err != nil {
 			if !(isRemote(s.URL) && errors.Is(err, os.ErrNotExist)) {
 				errs = append(errs, fmt.Errorf("%s: %w", s.Name, err))
-			}
-			continue // pas encore téléchargée : normal au premier démarrage
+				st.Error = err.Error()
+			} // sinon : pas encore téléchargée, normal au premier démarrage
+			statuses = append(statuses, st)
+			continue
 		}
-		nb, na := 0, 0
+		if fi, err := f.Stat(); err == nil {
+			st.UpdatedAt = fi.ModTime()
+		}
 		err = ParseReader(f, func(domain string, allow bool) {
 			if allow {
 				idx.allow.Add(domain)
-				na++
+				st.Exceptions++
 			} else {
 				idx.block.Add(domain)
-				nb++
+				st.Blocked++
 			}
 		})
 		f.Close()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", s.Name, err))
-			continue
+			st.Error = err.Error()
+		} else {
+			slog.Info("liste chargée", "liste", s.Name, "bloqués", st.Blocked, "exceptions", st.Exceptions)
 		}
-		slog.Info("liste chargée", "liste", s.Name, "bloqués", nb, "exceptions", na)
+		statuses = append(statuses, st)
 	}
 
 	u.engine.setLists(idx)
+	u.status.Store(&statuses)
 	slog.Info("index des listes publié", "domaines_bloqués", len(idx.block), "exceptions", len(idx.allow))
 	return errors.Join(errs...)
 }

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -274,9 +275,20 @@ func (l *Logger) top(query string, since time.Time, limit int) ([]Count, error) 
 }
 
 // Recent : les dernières requêtes, de la plus récente à la plus ancienne.
-func (l *Logger) Recent(limit int) ([]Entry, error) {
-	rows, err := l.db.Query(`SELECT ts, client, name, qtype, action, rule, rcode, dur_us
-	                         FROM queries ORDER BY ts DESC, id DESC LIMIT ?`, limit)
+// search (optionnel) ne garde que celles dont le domaine ou le client contient ce texte.
+func (l *Logger) Recent(limit int, search string) ([]Entry, error) {
+	query := `SELECT ts, client, name, qtype, action, rule, rcode, dur_us FROM queries`
+	var args []any
+	if search != "" {
+		// On échappe % et _ : ce sont des jokers en SQL LIKE, et on cherche du texte brut.
+		like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.ToLower(search)) + "%"
+		query += ` WHERE name LIKE ? ESCAPE '\' OR client LIKE ? ESCAPE '\'`
+		args = append(args, like, like)
+	}
+	query += ` ORDER BY ts DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := l.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -293,4 +305,42 @@ func (l *Logger) Recent(limit int) ([]Entry, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// Bucket : le nombre de requêtes d'une tranche de temps (pour le graphique).
+type Bucket struct {
+	Start          time.Time
+	Total, Blocked int64
+}
+
+// Timeline découpe la période [since, maintenant] en tranches de durée `step`
+// et compte les requêtes de chacune. Les tranches vides sont incluses (à zéro),
+// pour que le graphique n'ait pas de trous.
+func (l *Logger) Timeline(since time.Time, step time.Duration) ([]Bucket, error) {
+	stepMs := step.Milliseconds()
+	rows, err := l.db.Query(`SELECT ts / ? AS b, COUNT(*), COALESCE(SUM(action = 'blocked'), 0)
+	                         FROM queries WHERE ts >= ? GROUP BY b ORDER BY b`, stepMs, since.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[int64][2]int64{}
+	for rows.Next() {
+		var b, total, blocked int64
+		if err := rows.Scan(&b, &total, &blocked); err != nil {
+			return nil, err
+		}
+		counts[b] = [2]int64{total, blocked}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	first, last := since.UnixMilli()/stepMs, time.Now().UnixMilli()/stepMs
+	out := make([]Bucket, 0, last-first+1)
+	for b := first; b <= last; b++ {
+		c := counts[b]
+		out = append(out, Bucket{Start: time.UnixMilli(b * stepMs), Total: c[0], Blocked: c[1]})
+	}
+	return out, nil
 }

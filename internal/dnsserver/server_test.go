@@ -165,7 +165,7 @@ func TestQueriesAreLogged(t *testing.T) {
 	}
 	defer r.Close()
 
-	got, _ := r.Recent(20)
+	got, _ := r.Recent(20, "")
 	actions := map[string]string{} // domaine+statut
 	for _, e := range got {
 		if e.Name == "ready.test" {

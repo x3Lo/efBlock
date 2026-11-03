@@ -64,3 +64,17 @@ querylog:
   # path: "./data/queries.db"
   # Durée de conservation en jours (-1 = illimité).
   retention_days: 7
+
+web:
+  # Interface d'administration. Désactivée tant que password_hash est vide.
+  # Génère le hash avec :  ./efblock -hash-password
+  # IMPORTANT : mets le hash entre guillemets simples (il contient des $).
+  password_hash: ""
+  # Adresse d'écoute. Mets l'IP de la VM pour ne pas écouter sur les autres cartes.
+  listen: "0.0.0.0:8080"
+  # Seuls ces réseaux peuvent ouvrir l'interface (par défaut : tous les réseaux privés).
+  # Sur un wifi partagé, RESTREINS-LE à ton PC, ex: ["192.168.1.50/32"].
+  # allowed_cidrs: ["192.168.1.50/32"]
+  # HTTPS (recommandé si d'autres personnes sont sur le réseau) :
+  # tls_cert: "./data/cert.pem"
+  # tls_key: "./data/key.pem"

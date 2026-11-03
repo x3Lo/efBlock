@@ -92,7 +92,7 @@ func TestRecentOrderAndFields(t *testing.T) {
 	l.Log(e)
 	r := reopen(t, l, path)
 
-	got, err := r.Recent(10)
+	got, err := r.Recent(10, "")
 	if err != nil || len(got) != 2 {
 		t.Fatalf("Recent: %v, %d lignes", err, len(got))
 	}
@@ -102,7 +102,7 @@ func TestRecentOrderAndFields(t *testing.T) {
 	if got[0].Rule != "example.com" || got[0].QType != "AAAA" || got[0].Client != "c2" || got[0].Duration != 2*time.Millisecond {
 		t.Errorf("champs incorrects: %+v", got[0])
 	}
-	if one, _ := r.Recent(1); len(one) != 1 {
+	if one, _ := r.Recent(1, ""); len(one) != 1 {
 		t.Error("la limite n'est pas respectée")
 	}
 }
@@ -120,7 +120,7 @@ func TestRetentionPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer r.Close()
-	got, _ := r.Recent(10)
+	got, _ := r.Recent(10, "")
 	if len(got) != 1 || got[0].Name != "recent.example.com" {
 		t.Errorf("après purge: %+v", got)
 	}
@@ -158,5 +158,45 @@ func TestLogNeverBlocks(t *testing.T) {
 	}
 	if l.dropped.Load() != 98 {
 		t.Errorf("abandonnées = %d, attendu 98", l.dropped.Load())
+	}
+}
+
+func TestRecentSearchAndTimeline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "q.db")
+	l, _ := Open(path, 0)
+	l.Log(entry("192.168.50.20", "ads_tracker.example.com", ActionBlocked, 0))
+	l.Log(entry("192.168.50.21", "adsXtracker.example.com", ActionForwarded, 0)) // "_" ne doit pas servir de joker
+	l.Log(entry("192.168.50.21", "100%.example.com", ActionForwarded, 0))
+	l.Log(entry("192.168.50.20", "ancien.example.com", ActionForwarded, 3*time.Hour))
+	r := reopen(t, l, path)
+
+	got, _ := r.Recent(10, "ads_tracker")
+	if len(got) != 1 || got[0].Name != "ads_tracker.example.com" {
+		t.Errorf("recherche avec _ : %+v", got)
+	}
+	if got, _ := r.Recent(10, "100%"); len(got) != 1 {
+		t.Errorf("recherche avec %% : %+v", got)
+	}
+	if got, _ := r.Recent(10, "192.168.50.21"); len(got) != 2 {
+		t.Errorf("recherche par client : %d résultats", len(got))
+	}
+	if got, _ := r.Recent(10, "ADS_TRACKER"); len(got) != 1 {
+		t.Errorf("la recherche doit ignorer la casse")
+	}
+
+	buckets, err := r.Timeline(time.Now().Add(-4*time.Hour), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(buckets) < 4 || len(buckets) > 6 {
+		t.Fatalf("%d tranches, attendu ~5", len(buckets))
+	}
+	var total, blocked int64
+	for _, b := range buckets {
+		total += b.Total
+		blocked += b.Blocked
+	}
+	if total != 4 || blocked != 1 {
+		t.Errorf("total=%d blocked=%d, attendu 4 et 1", total, blocked)
 	}
 }

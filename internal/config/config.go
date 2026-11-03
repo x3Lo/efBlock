@@ -3,8 +3,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -16,6 +18,25 @@ type Config struct {
 	Filter Filter `yaml:"filter"`
 	Cache  Cache  `yaml:"cache"`
 	Log    Log    `yaml:"querylog"`
+	Web    Web    `yaml:"web"`
+}
+
+// Web regroupe les réglages de l'interface d'administration.
+type Web struct {
+	Listen       string   `yaml:"listen"`        // adresse d'écoute, ex "192.168.50.10:8080"
+	PasswordHash string   `yaml:"password_hash"` // hash bcrypt (voir: efblock -hash-password). Vide = interface désactivée
+	AllowedCIDRs []string `yaml:"allowed_cidrs"` // réseaux autorisés à l'atteindre
+	TLSCert      string   `yaml:"tls_cert"`      // optionnel : active HTTPS
+	TLSKey       string   `yaml:"tls_key"`
+
+	AllowedNets []*net.IPNet `yaml:"-"` // CIDR analysés (rempli par Load)
+}
+
+// defaultAllowedCIDRs : réseaux privés (LAN) et boucle locale. Jamais internet.
+var defaultAllowedCIDRs = []string{
+	"127.0.0.0/8", "::1/128", // cette machine
+	"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // IPv4 privées
+	"fc00::/7", "fe80::/10", // IPv6 privées
 }
 
 // Log regroupe les réglages du journal des requêtes.
@@ -121,6 +142,23 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Log.RetentionDays == 0 {
 		cfg.Log.RetentionDays = 7
+	}
+
+	if cfg.Web.Listen == "" {
+		cfg.Web.Listen = ":8080"
+	}
+	if len(cfg.Web.AllowedCIDRs) == 0 {
+		cfg.Web.AllowedCIDRs = defaultAllowedCIDRs
+	}
+	for _, c := range cfg.Web.AllowedCIDRs {
+		_, n, err := net.ParseCIDR(strings.TrimSpace(c))
+		if err != nil {
+			return nil, fmt.Errorf("web.allowed_cidrs: %q invalide (attendu ex: 192.168.1.0/24)", c)
+		}
+		cfg.Web.AllowedNets = append(cfg.Web.AllowedNets, n)
+	}
+	if (cfg.Web.TLSCert == "") != (cfg.Web.TLSKey == "") {
+		return nil, fmt.Errorf("web.tls_cert et web.tls_key vont ensemble")
 	}
 
 	if len(cfg.DNS.Bootstrap) == 0 {

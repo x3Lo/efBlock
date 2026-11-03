@@ -6,3 +6,6 @@
 config.yaml
 node_modules/
 .next/
+/web-ui/node_modules/
+/web-ui/.next/
+/web-ui/out/
