@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/x3Lo/efBlock/internal/cache"
 	"github.com/x3Lo/efBlock/internal/config"
 	"github.com/x3Lo/efBlock/internal/dnsserver"
 	"github.com/x3Lo/efBlock/internal/filter"
@@ -44,7 +45,19 @@ func main() {
 	updater := filter.NewUpdater(engine, sources, cfg.Filter.DataDir, cfg.Filter.UpdateInterval)
 
 	fwd := upstream.New(cfg.DNS.Upstreams, cfg.DNS.Timeout)
-	srv := dnsserver.New(cfg.DNS.Listen, fwd, engine, cfg.Filter.BlockMode == "nxdomain")
+
+	var dnsCache *cache.Cache
+	if cfg.Cache.IsEnabled() {
+		dnsCache = cache.New(cfg.Cache.MaxEntries, cfg.Cache.MaxTTL)
+	}
+
+	srv := dnsserver.New(dnsserver.Options{
+		Addr:     cfg.DNS.Listen,
+		Upstream: fwd,
+		Filter:   engine,
+		Cache:    dnsCache,
+		NXDomain: cfg.Filter.BlockMode == "nxdomain",
+	})
 
 	// ctx est annulé à l'arrêt : il stoppe proprement la mise à jour des listes.
 	ctx, cancel := context.WithCancel(context.Background())

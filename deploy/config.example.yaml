@@ -37,3 +37,11 @@ filter:
   allowlist: []
   # Toujours bloqués (sous-domaines inclus).
   blocklist: []
+
+cache:
+  # Mettre "enabled: false" pour désactiver (utile pour déboguer).
+  enabled: true
+  # Nombre max de réponses gardées en mémoire (~1 Ko chacune).
+  max_entries: 10000
+  # Plafond de durée de vie, même si l'upstream annonce un TTL plus long.
+  max_ttl: 24h

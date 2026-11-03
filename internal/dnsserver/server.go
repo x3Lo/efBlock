@@ -7,6 +7,7 @@ import (
 
 	"github.com/miekg/dns"
 
+	"github.com/x3Lo/efBlock/internal/cache"
 	"github.com/x3Lo/efBlock/internal/filter"
 	"github.com/x3Lo/efBlock/internal/upstream"
 )
@@ -15,19 +16,26 @@ import (
 // une réponse "bloquée". Court, pour qu'un domaine débloqué le soit vite.
 const blockedTTL = 10
 
-// Server est le serveur DNS d'efBlock.
-type Server struct {
-	addr     string
-	upstream *upstream.Forwarder
-	filter   *filter.Engine
-	nxdomain bool // true : bloque avec NXDOMAIN ; false : avec 0.0.0.0 / ::
-	servers  []*dns.Server
+// Options regroupe ce dont le serveur a besoin pour fonctionner.
+type Options struct {
+	Addr     string              // adresse d'écoute, ex "192.168.50.10:53"
+	Upstream *upstream.Forwarder // résolveurs amont
+	Filter   *filter.Engine      // décide quels domaines sont bloqués
+	Cache    *cache.Cache        // nil = pas de cache
+	NXDomain bool                // true : bloque avec NXDOMAIN ; false : avec 0.0.0.0 / ::
 }
 
-// New crée un serveur qui écoute sur addr, filtre via eng puis transmet via fwd.
-// Si nxdomain est vrai, les domaines bloqués reçoivent NXDOMAIN, sinon 0.0.0.0 / ::.
-func New(addr string, fwd *upstream.Forwarder, eng *filter.Engine, nxdomain bool) *Server {
-	return &Server{addr: addr, upstream: fwd, filter: eng, nxdomain: nxdomain}
+// Server est le serveur DNS d'efBlock.
+//
+// Chaque requête traverse : filtre -> cache -> upstream.
+type Server struct {
+	opts    Options
+	servers []*dns.Server
+}
+
+// New crée un serveur à partir de ses options.
+func New(opts Options) *Server {
+	return &Server{opts: opts}
 }
 
 // Start lance les écouteurs UDP et TCP. Il bloque jusqu'à la première erreur.
@@ -41,10 +49,10 @@ func (s *Server) Start() error {
 
 	errCh := make(chan error, 2)
 	for _, network := range []string{"udp", "tcp"} {
-		srv := &dns.Server{Addr: s.addr, Net: network, Handler: mux}
+		srv := &dns.Server{Addr: s.opts.Addr, Net: network, Handler: mux}
 		s.servers = append(s.servers, srv)
 		go func() {
-			slog.Info("serveur DNS démarré", "addr", s.addr, "proto", srv.Net)
+			slog.Info("serveur DNS démarré", "addr", s.opts.Addr, "proto", srv.Net)
 			errCh <- srv.ListenAndServe()
 		}()
 	}
@@ -64,30 +72,63 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 	if len(req.Question) != 1 {
 		resp := new(dns.Msg)
 		resp.SetRcode(req, dns.RcodeFormatError)
-		_ = w.WriteMsg(resp)
+		s.reply(w, req, resp)
 		return
 	}
 	q := req.Question[0]
+	qtype := dns.TypeToString[q.Qtype]
 
-	// Étape de filtrage : avant tout accès au réseau, on regarde si le domaine
+	// 1. Filtrage : avant tout accès au réseau, on regarde si le domaine
 	// est bloqué. Un domaine bloqué ne quitte jamais la maison.
-	if v := s.filter.Check(q.Name); v.Blocked {
-		slog.Debug("bloqué", "name", q.Name, "type", dns.TypeToString[q.Qtype], "règle", v.Rule, "raison", v.Reason)
-		_ = w.WriteMsg(s.blockedResponse(req, q))
+	if v := s.opts.Filter.Check(q.Name); v.Blocked {
+		slog.Debug("bloqué", "name", q.Name, "type", qtype, "règle", v.Rule, "raison", v.Reason)
+		s.reply(w, req, s.blockedResponse(req, q))
 		return
 	}
 
-	resp, err := s.upstream.Resolve(req)
+	// 2. Cache : si on a déjà la réponse (et qu'elle n'est pas périmée), on la
+	// sert sans toucher au réseau.
+	if s.opts.Cache != nil {
+		if resp, ok := s.opts.Cache.Get(req); ok {
+			slog.Debug("cache", "name", q.Name, "type", qtype, "rcode", dns.RcodeToString[resp.Rcode])
+			s.reply(w, req, resp)
+			return
+		}
+	}
+
+	// 3. Upstream.
+	resp, err := s.opts.Upstream.Resolve(req)
 	if err != nil {
-		slog.Warn("échec upstream", "name", q.Name, "type", dns.TypeToString[q.Qtype], "err", err)
+		slog.Warn("échec upstream", "name", q.Name, "type", qtype, "err", err)
 		// SERVFAIL = "j'ai essayé mais je n'ai pas pu résoudre".
 		fail := new(dns.Msg)
 		fail.SetRcode(req, dns.RcodeServerFailure)
-		_ = w.WriteMsg(fail)
+		s.reply(w, req, fail)
 		return
 	}
 
-	slog.Debug("requête transmise", "name", q.Name, "type", dns.TypeToString[q.Qtype], "rcode", dns.RcodeToString[resp.Rcode])
+	slog.Debug("requête transmise", "name", q.Name, "type", qtype, "rcode", dns.RcodeToString[resp.Rcode])
+	if s.opts.Cache != nil {
+		s.opts.Cache.Put(req, resp) // Put copie : on peut ensuite modifier resp (troncature)
+	}
+	s.reply(w, req, resp)
+}
+
+// reply envoie resp au client, en respectant la taille de paquet qu'il accepte.
+//
+// Concept DNS : en UDP, un client annonce la taille max de réponse qu'il sait
+// recevoir. Sans EDNS0 c'est 512 octets ; avec EDNS0 il l'écrit dans un
+// enregistrement OPT (souvent 1232 ou 4096). Si la réponse est plus grosse,
+// on la tronque et on met le drapeau TC : le client refait alors la question
+// en TCP, qui n'a pas cette limite.
+func (s *Server) reply(w dns.ResponseWriter, req, resp *dns.Msg) {
+	if _, isUDP := w.RemoteAddr().(*net.UDPAddr); isUDP {
+		size := dns.MinMsgSize // 512
+		if opt := req.IsEdns0(); opt != nil && int(opt.UDPSize()) > size {
+			size = int(opt.UDPSize())
+		}
+		resp.Truncate(size)
+	}
 	_ = w.WriteMsg(resp)
 }
 
@@ -107,7 +148,7 @@ func (s *Server) blockedResponse(req *dns.Msg, q dns.Question) *dns.Msg {
 	resp.SetReply(req)
 	resp.RecursionAvailable = true
 
-	if s.nxdomain {
+	if s.opts.NXDomain {
 		resp.Rcode = dns.RcodeNameError // NXDOMAIN
 		return resp
 	}

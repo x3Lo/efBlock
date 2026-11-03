@@ -13,7 +13,18 @@ import (
 type Config struct {
 	DNS    DNS    `yaml:"dns"`
 	Filter Filter `yaml:"filter"`
+	Cache  Cache  `yaml:"cache"`
 }
+
+// Cache regroupe les réglages du cache DNS.
+type Cache struct {
+	Enabled    *bool         `yaml:"enabled"`     // nil = activé par défaut
+	MaxEntries int           `yaml:"max_entries"` // nombre max de réponses gardées
+	MaxTTL     time.Duration `yaml:"max_ttl"`     // plafond de durée de vie d'une réponse
+}
+
+// IsEnabled indique si le cache est actif (oui, sauf "enabled: false").
+func (c Cache) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
 
 // Filter regroupe les réglages du blocage.
 type Filter struct {
@@ -80,6 +91,16 @@ func Load(path string) (*Config, error) {
 		if l.Name == "" {
 			cfg.Filter.Lists[i].Name = l.URL
 		}
+	}
+
+	if cfg.Cache.MaxEntries == 0 {
+		cfg.Cache.MaxEntries = 10000
+	}
+	if cfg.Cache.MaxEntries < 0 {
+		return nil, fmt.Errorf("cache.max_entries: doit être positif")
+	}
+	if cfg.Cache.MaxTTL == 0 {
+		cfg.Cache.MaxTTL = 24 * time.Hour
 	}
 
 	if len(cfg.DNS.Upstreams) == 0 {
