@@ -52,9 +52,13 @@ func startFakeUpstream(t *testing.T) (addr string, hits *atomic.Int32) {
 func startEfBlock(t *testing.T, upstreamAddr string, eng *filter.Engine, c *cache.Cache) string {
 	t.Helper()
 	addr := freeAddr(t)
+	fwd, err := upstream.New([]string{upstreamAddr}, 2*time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := New(Options{
 		Addr:     addr,
-		Upstream: upstream.New([]string{upstreamAddr}, 2*time.Second),
+		Upstream: fwd,
 		Filter:   eng,
 		Cache:    c,
 	})

@@ -44,7 +44,11 @@ func main() {
 	}
 	updater := filter.NewUpdater(engine, sources, cfg.Filter.DataDir, cfg.Filter.UpdateInterval)
 
-	fwd := upstream.New(cfg.DNS.Upstreams, cfg.DNS.Timeout)
+	fwd, err := upstream.New(cfg.DNS.Upstreams, cfg.DNS.Timeout, cfg.DNS.Bootstrap)
+	if err != nil {
+		slog.Error("upstreams", "err", err)
+		os.Exit(1)
+	}
 
 	var dnsCache *cache.Cache
 	if cfg.Cache.IsEnabled() {

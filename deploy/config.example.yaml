@@ -6,9 +6,20 @@ dns:
   listen: "127.0.0.1:5353"
 
   # Résolveurs amont, essayés dans l'ordre (le suivant prend le relais en cas d'échec).
+  #   "tls://1.1.1.1"                         DoT : chiffré, port 853
+  #   "https://cloudflare-dns.com/dns-query"  DoH : chiffré, port 443 (passe presque partout)
+  #   "1.1.1.1"                               DNS classique, NON chiffré
+  # Si le port 853 est bloqué (réseau d'école...), utilise les lignes https://.
   upstreams:
-    - "1.1.1.1:53"
-    - "9.9.9.9:53"
+    - "tls://1.1.1.1"
+    - "tls://9.9.9.9"
+    # - "https://cloudflare-dns.com/dns-query"
+    # - "https://dns.quad9.net/dns-query"
+    # - "1.1.1.1"      # secours en clair (désactivé : un blocage du chiffré ne doit pas te faire fuiter)
+
+  # DNS classiques servant UNIQUEMENT à trouver l'IP d'un upstream donné par un nom
+  # (cloudflare-dns.com...). Inutile si tes upstreams sont donnés par IP.
+  bootstrap: ["1.1.1.1:53", "9.9.9.9:53"]
 
   # Délai max d'attente d'une réponse amont.
   timeout: 3s

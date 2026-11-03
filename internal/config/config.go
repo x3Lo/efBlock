@@ -46,6 +46,7 @@ type List struct {
 type DNS struct {
 	Listen    string        `yaml:"listen"`
 	Upstreams []string      `yaml:"upstreams"`
+	Bootstrap []string      `yaml:"bootstrap"` // DNS classiques, pour résoudre le nom d'un upstream
 	Timeout   time.Duration `yaml:"timeout"`
 }
 
@@ -101,6 +102,10 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Cache.MaxTTL == 0 {
 		cfg.Cache.MaxTTL = 24 * time.Hour
+	}
+
+	if len(cfg.DNS.Bootstrap) == 0 {
+		cfg.DNS.Bootstrap = []string{"1.1.1.1:53", "9.9.9.9:53"}
 	}
 
 	if len(cfg.DNS.Upstreams) == 0 {
