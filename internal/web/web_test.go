@@ -7,25 +7,32 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/x3Lo/efBlock/internal/config"
 	"github.com/x3Lo/efBlock/internal/filter"
 	"github.com/x3Lo/efBlock/internal/querylog"
+	"github.com/x3Lo/efBlock/internal/settings"
 	"github.com/x3Lo/efBlock/internal/store"
 )
 
 const testPassword = "mot-de-passe-de-test"
 
 type env struct {
-	srv    *Server
-	h      http.Handler
-	engine *filter.Engine
-	log    *querylog.Logger
+	srv      *Server
+	h        http.Handler
+	engine   *filter.Engine
+	log      *querylog.Logger
+	settings *settings.Manager
+	applied  *config.Config // dernière configuration mise en application
+	restarts atomic.Int32
 }
 
 func newEnv(t *testing.T) *env {
@@ -46,8 +53,35 @@ func newEnv(t *testing.T) *env {
 	hash, _ := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
 	_, lan, _ := net.ParseCIDR("192.168.0.0/16")
 	_, lo, _ := net.ParseCIDR("127.0.0.0/8")
-	s := New(Deps{Engine: eng, Updater: upd, Store: st, Log: ql, PasswordHash: string(hash), AllowedNets: []*net.IPNet{lan, lo}})
-	return &env{srv: s, h: s.Handler(), engine: eng, log: ql}
+
+	// Réglages : une vraie configuration de base, comme au démarrage d'efBlock.
+	cfgPath := filepath.Join(dir, "config.yaml")
+	yaml := "dns:\n  upstreams: [\"127.0.0.1:1\"]\nweb:\n  allowed_cidrs: [\"192.168.0.0/16\", \"127.0.0.0/8\"]\n  password_hash: '" + string(hash) + "'\n"
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := settings.Open(filepath.Join(dir, "settings.json"), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := &env{engine: eng, log: ql, settings: sm}
+	s := New(Deps{Engine: eng, Updater: upd, Store: st, Log: ql, Settings: sm,
+		PasswordHash: string(hash), AllowedNets: []*net.IPNet{lan, lo},
+		Restart: func() { e.restarts.Add(1) }})
+	// Comme dans main : une configuration validée est mise en application.
+	sm.SetApply(func(c *config.Config) error {
+		e.applied = c
+		s.SetAllowedNets(c.Web.AllowedNets)
+		s.SetPasswordHash(c.Web.PasswordHash)
+		return nil
+	})
+	e.srv, e.h = s, s.Handler()
+	return e
 }
 
 // do envoie une requête depuis remote (ex "192.168.1.5:1234") avec cookie et corps optionnels.

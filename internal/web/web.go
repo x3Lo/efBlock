@@ -9,12 +9,16 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/x3Lo/efBlock/internal/cache"
 	"github.com/x3Lo/efBlock/internal/filter"
 	"github.com/x3Lo/efBlock/internal/querylog"
+	"github.com/x3Lo/efBlock/internal/settings"
 	"github.com/x3Lo/efBlock/internal/store"
+	"github.com/x3Lo/efBlock/internal/upstream"
 )
 
 // dist contient l'interface compilée (voir `make ui`).
@@ -37,12 +41,17 @@ type Deps struct {
 	Engine  *filter.Engine
 	Updater *filter.Updater
 	Store   *store.Store
-	Log     *querylog.Logger // peut être nil (journal désactivé)
-	Cache   *cache.Cache     // peut être nil
+	Log     *querylog.Logger    // peut être nil (journal désactivé)
+	Cache   func() *cache.Cache // le cache actuel (peut changer à chaud) ; peut être nil
 
 	PasswordHash string       // hash bcrypt du mot de passe
 	AllowedNets  []*net.IPNet // seuls ces réseaux peuvent atteindre l'interface
 	Secure       bool         // true si servi en HTTPS : cookie marqué "Secure"
+
+	Settings   *settings.Manager          // réglages modifiables depuis l'interface
+	Upstream   func() *upstream.Forwarder // résolveurs amont actuels (état de santé)
+	ClientName func(ip string) string     // nom d'une machine à partir de son IP ("" si inconnu)
+	Restart    func()                     // redémarre efBlock ; nil si impossible (hors systemd)
 }
 
 // Server est le gestionnaire HTTP de l'interface.
@@ -50,12 +59,28 @@ type Server struct {
 	d        Deps
 	sessions *sessions
 	limiter  *limiter
+
+	// Modifiables à chaud depuis l'interface.
+	nets atomic.Pointer[[]*net.IPNet]
+	hash atomic.Pointer[string]
+
+	statsMu    sync.Mutex
+	statsCache map[int]cachedStats
 }
 
 // New crée le serveur.
 func New(d Deps) *Server {
-	return &Server{d: d, sessions: newSessions(sessionTTL), limiter: newLimiter(loginAttempts, loginLockout)}
+	s := &Server{d: d, sessions: newSessions(sessionTTL), limiter: newLimiter(loginAttempts, loginLockout), statsCache: map[int]cachedStats{}}
+	s.SetAllowedNets(d.AllowedNets)
+	s.SetPasswordHash(d.PasswordHash)
+	return s
 }
+
+// SetAllowedNets remplace les réseaux autorisés à atteindre l'interface.
+func (s *Server) SetAllowedNets(nets []*net.IPNet) { s.nets.Store(&nets) }
+
+// SetPasswordHash remplace le hash du mot de passe.
+func (s *Server) SetPasswordHash(h string) { s.hash.Store(&h) }
 
 // Handler retourne le gestionnaire à passer à http.Server.
 func (s *Server) Handler() http.Handler {
@@ -71,6 +96,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/blocking", s.auth(s.handleBlocking))
 	mux.HandleFunc("GET /api/queries", s.auth(s.handleQueries))
 	mux.HandleFunc("GET /api/queries/stream", s.auth(s.handleQueryStream))
+	mux.HandleFunc("GET /api/settings", s.auth(s.handleSettings))
+	mux.HandleFunc("PUT /api/settings/{group}", s.auth(s.handleSettingsUpdate))
+	mux.HandleFunc("DELETE /api/settings/{group}", s.auth(s.handleSettingsReset))
+	mux.HandleFunc("POST /api/upstreams/test", s.auth(s.handleUpstreamsTest))
+	mux.HandleFunc("POST /api/password", s.auth(s.handlePassword))
+	mux.HandleFunc("POST /api/restart", s.auth(s.handleRestart))
 	mux.HandleFunc("GET /api/allowlist", s.auth(s.handleDomains(store.Allow)))
 	mux.HandleFunc("POST /api/allowlist", s.auth(s.handleAddDomain(store.Allow)))
 	mux.HandleFunc("DELETE /api/allowlist", s.auth(s.handleRemoveDomain(store.Allow)))
@@ -110,7 +141,7 @@ func (s *Server) ipAllowed(ip net.IP) bool {
 	if ip == nil {
 		return false
 	}
-	for _, n := range s.d.AllowedNets {
+	for _, n := range *s.nets.Load() {
 		if n.Contains(ip) {
 			return true
 		}

@@ -77,7 +77,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// bcrypt est volontairement lent (~50-100 ms) : ça rend le test de
 	// milliers de mots de passe impraticable.
-	if bcrypt.CompareHashAndPassword([]byte(s.d.PasswordHash), []byte(body.Password)) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(*s.hash.Load()), []byte(body.Password)) != nil {
 		s.limiter.failure(ip)
 		slog.Warn("échec de connexion à l'interface web", "ip", ip)
 		writeError(w, http.StatusUnauthorized, "mot de passe incorrect")
@@ -115,19 +115,48 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // --- Tableau de bord -------------------------------------------------------
 
+// rankJSON : une ligne d'un classement (domaine ou client).
+type rankJSON struct {
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
+	Label string `json:"label,omitempty"` // nom de la machine, pour les clients
+}
+
+type upstreamJSON struct {
+	Name      string     `json:"name"`
+	Healthy   bool       `json:"healthy"`
+	Failures  int        `json:"failures"`
+	DownUntil *time.Time `json:"downUntil,omitempty"`
+}
+
+// heavyStats : la partie coûteuse à calculer (parcourt le journal) ; elle est gardée quelques secondes.
+type heavyStats struct {
+	Summary    summaryJSON  `json:"summary"`
+	TopBlocked []rankJSON   `json:"topBlocked"`
+	TopDomains []rankJSON   `json:"topDomains"`
+	TopClients []rankJSON   `json:"topClients"`
+	Timeline   []bucketJSON `json:"timeline"`
+}
+
+type cachedStats struct {
+	at   time.Time
+	data heavyStats
+}
+
 type statsResponse struct {
-	LogEnabled bool                              `json:"logEnabled"`
-	Hours      int                               `json:"hours"`
-	Summary    summaryJSON                       `json:"summary"`
-	TopBlocked []querylog.Count                  `json:"topBlocked"`
-	TopDomains []querylog.Count                  `json:"topDomains"`
-	TopClients []querylog.Count                  `json:"topClients"`
-	Timeline   []bucketJSON                      `json:"timeline"`
-	Blocking   blockingJSON                      `json:"blocking"`
-	Filter     struct{ Blocked, Exceptions int } `json:"filter"`
-	Cache      *struct {
-		Hits, Misses uint64
-		Entries      int
+	heavyStats
+	LogEnabled bool           `json:"logEnabled"`
+	Hours      int            `json:"hours"`
+	Blocking   blockingJSON   `json:"blocking"`
+	Upstreams  []upstreamJSON `json:"upstreams"`
+	Filter     struct {
+		Blocked    int `json:"blocked"`
+		Exceptions int `json:"exceptions"`
+	} `json:"filter"`
+	Cache *struct {
+		Hits    uint64 `json:"hits"`
+		Misses  uint64 `json:"misses"`
+		Entries int    `json:"entries"`
 	} `json:"cache"`
 }
 
@@ -136,6 +165,7 @@ type summaryJSON struct {
 	Blocked    int64   `json:"blocked"`
 	Cached     int64   `json:"cached"`
 	Forwarded  int64   `json:"forwarded"`
+	Local      int64   `json:"local"`
 	Errors     int64   `json:"errors"`
 	BlockedPct float64 `json:"blockedPct"`
 }
@@ -162,6 +192,56 @@ func (s *Server) blockingState() blockingJSON {
 	return blockingJSON{Mode: "on"}
 }
 
+// statsTTL : durée pendant laquelle les statistiques lourdes sont réutilisées. Plusieurs
+// onglets ouverts, ou un rafraîchissement automatique, ne refont pas le calcul à chaque fois.
+const statsTTL = 5 * time.Second
+
+func (s *Server) heavy(hours int) (heavyStats, error) {
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock() // un seul calcul à la fois : les appels simultanés attendent puis réutilisent le résultat
+	if c, ok := s.statsCache[hours]; ok && time.Since(c.at) < statsTTL {
+		return c.data, nil
+	}
+
+	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	// Largeur des barres du graphique selon la période : ~12 à 28 barres.
+	step := map[int]time.Duration{1: 5 * time.Minute, 24: time.Hour, 168: 6 * time.Hour}[hours]
+
+	h := heavyStats{TopBlocked: []rankJSON{}, TopDomains: []rankJSON{}, TopClients: []rankJSON{}, Timeline: []bucketJSON{}}
+	sum, err := s.d.Log.Summary(since)
+	if err != nil {
+		return h, err
+	}
+	h.Summary = summaryJSON{sum.Total, sum.Blocked, sum.Cached, sum.Forwarded, sum.Local, sum.Errors, sum.BlockedPercent()}
+
+	ranks := func(rows []querylog.Count, err error, withNames bool) ([]rankJSON, error) {
+		out := []rankJSON{}
+		for _, r := range rows {
+			out = append(out, rankJSON{Name: r.Name, Count: r.Count})
+		}
+		return out, err
+	}
+	var e1, e2, e3, e4 error
+	rows, e := s.d.Log.TopBlocked(since, 10)
+	h.TopBlocked, e1 = ranks(rows, e, false)
+	rows, e = s.d.Log.TopDomains(since, 10)
+	h.TopDomains, e2 = ranks(rows, e, false)
+	rows, e = s.d.Log.TopClients(since, 10)
+	h.TopClients, e3 = ranks(rows, e, true)
+	if tl, e := s.d.Log.Timeline(since, step); e == nil {
+		for _, b := range tl {
+			h.Timeline = append(h.Timeline, bucketJSON{b.Start, b.Total, b.Blocked})
+		}
+	} else {
+		e4 = e
+	}
+	if err := errors.Join(e1, e2, e3, e4); err != nil {
+		return h, err
+	}
+	s.statsCache[hours] = cachedStats{at: time.Now(), data: h}
+	return h, nil
+}
+
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	hours := 24
 	switch r.URL.Query().Get("hours") {
@@ -170,58 +250,57 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	case "168":
 		hours = 168
 	}
-	resp := statsResponse{Hours: hours, Blocking: s.blockingState(),
-		TopBlocked: []querylog.Count{}, TopDomains: []querylog.Count{}, TopClients: []querylog.Count{}, Timeline: []bucketJSON{}}
+	resp := statsResponse{Hours: hours, Blocking: s.blockingState(), Upstreams: []upstreamJSON{},
+		heavyStats: heavyStats{TopBlocked: []rankJSON{}, TopDomains: []rankJSON{}, TopClients: []rankJSON{}, Timeline: []bucketJSON{}}}
 	resp.Filter.Blocked, resp.Filter.Exceptions = s.d.Engine.Counts()
 	if s.d.Cache != nil {
-		h, m, n := s.d.Cache.Stats()
-		resp.Cache = &struct {
-			Hits, Misses uint64
-			Entries      int
-		}{h, m, n}
+		if c := s.d.Cache(); c != nil {
+			h, m, n := c.Stats()
+			resp.Cache = &struct {
+				Hits    uint64 `json:"hits"`
+				Misses  uint64 `json:"misses"`
+				Entries int    `json:"entries"`
+			}{h, m, n}
+		}
+	}
+	if s.d.Upstream != nil {
+		if f := s.d.Upstream(); f != nil {
+			for _, st := range f.Status() {
+				u := upstreamJSON{Name: st.Name, Healthy: st.Healthy, Failures: st.Failures}
+				if !st.Healthy {
+					t := st.DownUntil
+					u.DownUntil = &t
+				}
+				resp.Upstreams = append(resp.Upstreams, u)
+			}
+		}
 	}
 
 	if s.d.Log != nil {
 		resp.LogEnabled = true
-		since := time.Now().Add(-time.Duration(hours) * time.Hour)
-		// Largeur des barres du graphique selon la période : ~12 à 28 barres.
-		step := map[int]time.Duration{1: 5 * time.Minute, 24: time.Hour, 168: 6 * time.Hour}[hours]
-
-		sum, err := s.d.Log.Summary(since)
-		if err == nil {
-			resp.Summary = summaryJSON{sum.Total, sum.Blocked, sum.Cached, sum.Forwarded, sum.Errors, sum.BlockedPercent()}
-			var e1, e2, e3, e4 error
-			if v, e := s.d.Log.TopBlocked(since, 10); e == nil && v != nil {
-				resp.TopBlocked = v
-			} else {
-				e1 = e
-			}
-			if v, e := s.d.Log.TopDomains(since, 10); e == nil && v != nil {
-				resp.TopDomains = v
-			} else {
-				e2 = e
-			}
-			if v, e := s.d.Log.TopClients(since, 10); e == nil && v != nil {
-				resp.TopClients = v
-			} else {
-				e3 = e
-			}
-			if tl, e := s.d.Log.Timeline(since, step); e == nil {
-				for _, b := range tl {
-					resp.Timeline = append(resp.Timeline, bucketJSON{b.Start, b.Total, b.Blocked})
-				}
-			} else {
-				e4 = e
-			}
-			err = errors.Join(e1, e2, e3, e4)
-		}
+		h, err := s.heavy(hours)
 		if err != nil {
 			slog.Error("statistiques", "err", err)
 			writeError(w, http.StatusInternalServerError, "erreur de lecture du journal")
 			return
 		}
+		resp.heavyStats = h
+		// Les noms des machines changent plus souvent que les chiffres : ajoutés à chaque réponse.
+		clients := make([]rankJSON, len(h.TopClients))
+		copy(clients, h.TopClients)
+		for i := range clients {
+			clients[i].Label = s.clientName(clients[i].Name)
+		}
+		resp.TopClients = clients
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) clientName(ip string) string {
+	if s.d.ClientName == nil {
+		return ""
+	}
+	return s.d.ClientName(ip)
 }
 
 // handleBlocking : activer, désactiver, ou mettre en pause le blocage.
@@ -259,12 +338,18 @@ func (s *Server) handleBlocking(w http.ResponseWriter, r *http.Request) {
 type entryJSON struct {
 	Time       time.Time `json:"time"`
 	Client     string    `json:"client"`
+	ClientName string    `json:"clientName,omitempty"`
 	Name       string    `json:"name"`
 	QType      string    `json:"qtype"`
 	Action     string    `json:"action"`
 	Rule       string    `json:"rule"`
 	Rcode      string    `json:"rcode"`
 	DurationUs int64     `json:"durationUs"`
+}
+
+// entry convertit une ligne du journal pour l'interface, avec le nom de la machine si on le connaît.
+func (s *Server) entry(e querylog.Entry) entryJSON {
+	return entryJSON{e.Time, e.Client, s.clientName(e.Client), e.Name, e.QType, e.Action, e.Rule, e.Rcode, e.Duration.Microseconds()}
 }
 
 func (s *Server) handleQueries(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +373,7 @@ func (s *Server) handleQueries(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]entryJSON, 0, len(rows))
 	for _, e := range rows {
-		out = append(out, entryJSON{e.Time, e.Client, e.Name, e.QType, e.Action, e.Rule, e.Rcode, e.Duration.Microseconds()})
+		out = append(out, s.entry(e))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"logEnabled": true, "entries": out})
 }
@@ -350,7 +435,7 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return // journal fermé
 			}
-			b, _ := json.Marshal(entryJSON{e.Time, e.Client, e.Name, e.QType, e.Action, e.Rule, e.Rcode, e.Duration.Microseconds()})
+			b, _ := json.Marshal(s.entry(e))
 			if !write("data: %s\n\n", b) {
 				return
 			}

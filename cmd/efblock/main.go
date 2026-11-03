@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -20,7 +21,9 @@ import (
 	"github.com/x3Lo/efBlock/internal/config"
 	"github.com/x3Lo/efBlock/internal/dnsserver"
 	"github.com/x3Lo/efBlock/internal/filter"
+	"github.com/x3Lo/efBlock/internal/localdns"
 	"github.com/x3Lo/efBlock/internal/querylog"
+	"github.com/x3Lo/efBlock/internal/settings"
 	"github.com/x3Lo/efBlock/internal/store"
 	"github.com/x3Lo/efBlock/internal/upstream"
 	"github.com/x3Lo/efBlock/internal/web"
@@ -42,11 +45,20 @@ func main() {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 
-	cfg, err := config.Load(*cfgPath)
+	base, err := config.Load(*cfgPath)
 	if err != nil {
 		slog.Error("config", "err", err)
 		os.Exit(1)
 	}
+
+	// Réglages modifiables depuis l'interface web (settings.json) : ils remplacent
+	// ceux de config.yaml pour les groupes modifiés. cfg est la configuration EN VIGUEUR.
+	mgr, err := settings.Open(filepath.Join(base.Filter.DataDir, "settings.json"), base)
+	if err != nil {
+		slog.Error("réglages", "err", err)
+		os.Exit(1)
+	}
+	cfg := mgr.Effective()
 
 	// Moteur de filtrage : allowlist/blocklist perso + listes téléchargées.
 	engine := filter.NewEngine()
@@ -65,15 +77,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	fwd, err := upstream.New(cfg.DNS.Upstreams, cfg.DNS.Timeout, cfg.DNS.Bootstrap)
+	fwd, zone, err := buildDNS(cfg)
 	if err != nil {
-		slog.Error("upstreams", "err", err)
+		slog.Error("configuration DNS", "err", err)
 		os.Exit(1)
 	}
 
-	var dnsCache *cache.Cache
+	// Le cache peut être remplacé à chaud (taille, durée) : on garde un pointeur partagé.
+	var liveCache atomic.Pointer[cache.Cache]
 	if cfg.Cache.IsEnabled() {
-		dnsCache = cache.New(cfg.Cache.MaxEntries, cfg.Cache.MaxTTL)
+		liveCache.Store(cache.New(cfg.Cache.MaxEntries, cfg.Cache.MaxTTL))
 	}
 
 	// Journal des requêtes (SQLite). Close() à l'arrêt écrit les dernières lignes.
@@ -83,11 +96,7 @@ func main() {
 			slog.Error("dossier du journal", "err", err)
 			os.Exit(1)
 		}
-		retention := time.Duration(cfg.Log.RetentionDays) * 24 * time.Hour
-		if cfg.Log.RetentionDays < 0 {
-			retention = 0
-		}
-		qlog, err = querylog.Open(cfg.Log.Path, retention)
+		qlog, err = querylog.Open(cfg.Log.Path, retention(cfg))
 		if err != nil {
 			slog.Error("journal des requêtes", "err", err)
 			os.Exit(1)
@@ -96,12 +105,14 @@ func main() {
 	}
 
 	srv := dnsserver.New(dnsserver.Options{
-		Log:      qlog,
-		Addr:     cfg.DNS.Listen,
-		Upstream: fwd,
-		Filter:   engine,
-		Cache:    dnsCache,
-		NXDomain: cfg.Filter.BlockMode == "nxdomain",
+		Log:            qlog,
+		Addr:           cfg.DNS.Listen,
+		Upstream:       fwd,
+		Filter:         engine,
+		Cache:          liveCache.Load(),
+		NXDomain:       cfg.Filter.BlockMode == "nxdomain",
+		AllowedClients: cfg.DNS.AllowedNets,
+		Local:          zone,
 	})
 
 	// ctx est annulé à l'arrêt : il stoppe proprement la mise à jour des listes.
@@ -123,17 +134,30 @@ func main() {
 
 	// Interface web (seulement si un mot de passe est configuré).
 	var httpSrv *http.Server
+	var webSrv *web.Server
 	if cfg.Web.PasswordHash == "" {
 		slog.Warn("interface web désactivée : aucun web.password_hash dans la config (génère-le avec: efblock -hash-password)")
 	} else {
-		w := web.New(web.Deps{
-			Engine: engine, Updater: updater, Store: st, Log: qlog, Cache: dnsCache,
+		// Sous systemd, "redémarrer" = quitter proprement : Restart=always relance le service.
+		var restart func()
+		if os.Getenv("INVOCATION_ID") != "" {
+			restart = func() { _ = syscall.Kill(os.Getpid(), syscall.SIGTERM) }
+		}
+		webSrv = web.New(web.Deps{
+			Engine: engine, Updater: updater, Store: st, Log: qlog,
+			Cache:        liveCache.Load,
 			PasswordHash: cfg.Web.PasswordHash, AllowedNets: cfg.Web.AllowedNets,
-			Secure: cfg.Web.TLSCert != "",
+			Secure:   cfg.Web.TLSCert != "",
+			Settings: mgr,
+			Upstream: srv.Upstream,
+			ClientName: func(ip string) string {
+				return srv.Local().ClientName(ip)
+			},
+			Restart: restart,
 		})
 		httpSrv = &http.Server{
 			Addr:              cfg.Web.Listen,
-			Handler:           w.Handler(),
+			Handler:           webSrv.Handler(),
 			ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout:       30 * time.Second,
 			WriteTimeout:      30 * time.Second,
@@ -153,6 +177,36 @@ func main() {
 		}()
 	}
 
+	// Mise en application à chaud d'une configuration modifiée depuis l'interface.
+	// Tout est construit AVANT de remplacer quoi que ce soit : si une valeur est
+	// refusée (upstream mal écrit, hôte invalide...), rien ne change.
+	mgr.SetApply(func(c *config.Config) error {
+		newFwd, newZone, err := buildDNS(c)
+		if err != nil {
+			return err
+		}
+		srv.SetUpstream(newFwd)
+		srv.SetLocal(newZone)
+		srv.SetAllowedClients(c.DNS.AllowedNets)
+		srv.SetNXDomain(c.Filter.BlockMode == "nxdomain")
+		if c.Cache.IsEnabled() {
+			nc := cache.New(c.Cache.MaxEntries, c.Cache.MaxTTL)
+			liveCache.Store(nc)
+			srv.SetCache(nc)
+		} else {
+			liveCache.Store(nil)
+			srv.SetCache(nil)
+		}
+		updater.SetInterval(c.Filter.UpdateInterval)
+		qlog.SetRetention(retention(c))
+		if webSrv != nil {
+			webSrv.SetAllowedNets(c.Web.AllowedNets)
+			webSrv.SetPasswordHash(c.Web.PasswordHash)
+		}
+		slog.Info("configuration appliquée à chaud")
+		return nil
+	})
+
 	// Arrêt de l'interface web en même temps que le DNS.
 	stopWeb := func() {
 		if httpSrv != nil {
@@ -167,6 +221,27 @@ func main() {
 		slog.Error("serveur DNS", "err", err)
 		os.Exit(1)
 	}
+}
+
+// buildDNS construit les résolveurs amont et la zone locale d'une configuration.
+func buildDNS(c *config.Config) (*upstream.Forwarder, *localdns.Zone, error) {
+	fwd, err := upstream.New(c.DNS.Upstreams, c.DNS.Timeout, c.DNS.Bootstrap)
+	if err != nil {
+		return nil, nil, err
+	}
+	zone, err := localdns.New(c.DNS.Local.Upstream, c.DNS.Local.Domains, c.DNS.Local.Hosts, c.DNS.Timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	return fwd, zone, nil
+}
+
+// retention : durée de conservation du journal (0 = illimitée).
+func retention(c *config.Config) time.Duration {
+	if c.Log.RetentionDays < 0 {
+		return 0
+	}
+	return time.Duration(c.Log.RetentionDays) * 24 * time.Hour
 }
 
 // hashPassword lit un mot de passe au clavier (sans l'afficher) et imprime son

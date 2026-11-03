@@ -4,12 +4,14 @@ package dnsserver
 import (
 	"log/slog"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
 
 	"github.com/x3Lo/efBlock/internal/cache"
 	"github.com/x3Lo/efBlock/internal/filter"
+	"github.com/x3Lo/efBlock/internal/localdns"
 	"github.com/x3Lo/efBlock/internal/querylog"
 	"github.com/x3Lo/efBlock/internal/upstream"
 )
@@ -26,20 +28,67 @@ type Options struct {
 	Cache    *cache.Cache        // nil = pas de cache
 	Log      *querylog.Logger    // nil = pas de journal
 	NXDomain bool                // true : bloque avec NXDOMAIN ; false : avec 0.0.0.0 / ::
+
+	// AllowedClients : seuls ces réseaux sont servis (nil = tout le monde, à réserver aux tests).
+	AllowedClients []*net.IPNet
+
+	// Local : noms du réseau local (nil = aucun traitement particulier).
+	Local *localdns.Zone
 }
 
 // Server est le serveur DNS d'efBlock.
 //
-// Chaque requête traverse : filtre -> cache -> upstream.
+// Chaque requête traverse : accès -> noms locaux -> filtre -> cache -> upstream.
+//
+// Les réglages modifiables à chaud (upstreams, cache, clients autorisés, noms
+// locaux, mode de blocage) sont des pointeurs atomiques : une requête en cours
+// finit avec l'ancien réglage, la suivante utilise le nouveau, sans verrou ni
+// coupure. Les Set* ci-dessous les remplacent.
 type Server struct {
 	opts    Options
 	servers []*dns.Server
+
+	upstream atomic.Pointer[upstream.Forwarder]
+	cache    atomic.Pointer[cache.Cache]
+	clients  atomic.Pointer[[]*net.IPNet]
+	local    atomic.Pointer[localdns.Zone]
+	nxdomain atomic.Bool
+
+	refused        atomic.Uint64 // requêtes refusées par le contrôle d'accès
+	lastRefusedLog atomic.Int64  // dernier avertissement (nanosecondes Unix)
 }
 
 // New crée un serveur à partir de ses options.
 func New(opts Options) *Server {
-	return &Server{opts: opts}
+	s := &Server{opts: opts}
+	s.SetUpstream(opts.Upstream)
+	s.SetCache(opts.Cache)
+	s.SetAllowedClients(opts.AllowedClients)
+	s.SetLocal(opts.Local)
+	s.SetNXDomain(opts.NXDomain)
+	return s
 }
+
+// SetUpstream remplace les résolveurs amont.
+func (s *Server) SetUpstream(f *upstream.Forwarder) { s.upstream.Store(f) }
+
+// SetCache remplace le cache (nil = pas de cache).
+func (s *Server) SetCache(c *cache.Cache) { s.cache.Store(c) }
+
+// SetAllowedClients remplace les réseaux autorisés (vide = tout le monde).
+func (s *Server) SetAllowedClients(nets []*net.IPNet) { s.clients.Store(&nets) }
+
+// SetLocal remplace la zone locale (nil = aucune).
+func (s *Server) SetLocal(z *localdns.Zone) { s.local.Store(z) }
+
+// SetNXDomain choisit la réponse aux domaines bloqués : NXDOMAIN, ou 0.0.0.0 / ::.
+func (s *Server) SetNXDomain(v bool) { s.nxdomain.Store(v) }
+
+// Upstream retourne les résolveurs amont actuels (pour afficher leur état).
+func (s *Server) Upstream() *upstream.Forwarder { return s.upstream.Load() }
+
+// Local retourne la zone locale actuelle (peut être nil).
+func (s *Server) Local() *localdns.Zone { return s.local.Load() }
 
 // Start lance les écouteurs UDP et TCP. Il bloque jusqu'à la première erreur.
 //
@@ -73,6 +122,17 @@ func (s *Server) Shutdown() {
 func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()
 
+	// 0. Contrôle d'accès : un serveur DNS ouvert à tous peut être détourné pour
+	// attaquer des tiers (en UDP, l'adresse source se falsifie : la réponse part
+	// vers la victime). On refuse donc tout client hors des réseaux autorisés.
+	if !s.clientAllowed(w) {
+		resp := new(dns.Msg)
+		resp.SetRcode(req, dns.RcodeRefused)
+		_ = w.WriteMsg(resp)
+		s.warnRefused(clientIP(w))
+		return
+	}
+
 	// Une requête valide contient exactement une question (nom + type).
 	if len(req.Question) != 1 {
 		resp := new(dns.Msg)
@@ -97,6 +157,13 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 		})
 	}
 
+	// 0b. Noms du réseau local : jamais bloqués, jamais envoyés sur internet.
+	if resp, ok := s.local.Load().Answer(req); ok {
+		s.reply(w, req, resp)
+		record(querylog.ActionLocal, "", resp.Rcode)
+		return
+	}
+
 	// 1. Filtrage : avant tout accès au réseau, on regarde si le domaine
 	// est bloqué. Un domaine bloqué ne quitte jamais la maison.
 	if v := s.opts.Filter.Check(q.Name); v.Blocked {
@@ -109,8 +176,9 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 
 	// 2. Cache : si on a déjà la réponse (et qu'elle n'est pas périmée), on la
 	// sert sans toucher au réseau.
-	if s.opts.Cache != nil {
-		if resp, ok := s.opts.Cache.Get(req); ok {
+	c := s.cache.Load()
+	if c != nil {
+		if resp, ok := c.Get(req); ok {
 			slog.Debug("cache", "name", q.Name, "type", qtype, "rcode", dns.RcodeToString[resp.Rcode])
 			s.reply(w, req, resp)
 			record(querylog.ActionCached, "", resp.Rcode)
@@ -119,7 +187,7 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	// 3. Upstream.
-	resp, err := s.opts.Upstream.Resolve(req)
+	resp, err := s.upstream.Load().Resolve(req)
 	if err != nil {
 		slog.Warn("échec upstream", "name", q.Name, "type", qtype, "err", err)
 		// SERVFAIL = "j'ai essayé mais je n'ai pas pu résoudre".
@@ -131,8 +199,8 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	slog.Debug("requête transmise", "name", q.Name, "type", qtype, "rcode", dns.RcodeToString[resp.Rcode])
-	if s.opts.Cache != nil {
-		s.opts.Cache.Put(req, resp) // Put copie : on peut ensuite modifier resp (troncature)
+	if c != nil {
+		c.Put(req, resp) // Put copie : on peut ensuite modifier resp (troncature)
 	}
 	s.reply(w, req, resp)
 	record(querylog.ActionForwarded, "", resp.Rcode)
@@ -181,7 +249,7 @@ func (s *Server) blockedResponse(req *dns.Msg, q dns.Question) *dns.Msg {
 	resp.SetReply(req)
 	resp.RecursionAvailable = true
 
-	if s.opts.NXDomain {
+	if s.nxdomain.Load() {
 		resp.Rcode = dns.RcodeNameError // NXDOMAIN
 		return resp
 	}
@@ -196,4 +264,33 @@ func (s *Server) blockedResponse(req *dns.Msg, q dns.Question) *dns.Msg {
 		resp.Answer = append(resp.Answer, &dns.AAAA{Hdr: hdr, AAAA: net.IPv6zero})
 	}
 	return resp
+}
+
+// clientAllowed indique si le client de w fait partie des réseaux autorisés.
+func (s *Server) clientAllowed(w dns.ResponseWriter) bool {
+	nets := *s.clients.Load()
+	if len(nets) == 0 {
+		return true
+	}
+	ip := net.ParseIP(clientIP(w))
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4 // une IPv4 vue en IPv6 (::ffff:a.b.c.d) redevient une IPv4
+	}
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// warnRefused signale les refus, au plus une fois toutes les 30 s : un scan du
+// port 53 ne doit pas remplir les logs (ni être un moyen de les saturer).
+func (s *Server) warnRefused(ip string) {
+	now := time.Now().UnixNano()
+	last := s.lastRefusedLog.Load()
+	n := s.refused.Add(1)
+	if now-last > int64(30*time.Second) && s.lastRefusedLog.CompareAndSwap(last, now) {
+		slog.Warn("requêtes refusées : client hors des réseaux autorisés (dns.allowed_clients)", "exemple", ip, "total", n)
+	}
 }

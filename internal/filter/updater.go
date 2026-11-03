@@ -36,12 +36,20 @@ type ListStatus struct {
 // maxListSize protège la VM contre une URL qui renverrait un fichier énorme.
 const maxListSize = 100 << 20 // 100 Mo
 
+// Garde-fous contre une liste corrompue. Un serveur en panne renvoie parfois une
+// page d'erreur HTML avec le code 200 : sans contrôle, elle remplacerait une bonne
+// liste par... rien, sans aucune erreur, et la copie fautive survivrait au redémarrage.
+const (
+	minOldForRatio = 100 // en dessous, on ne compare pas à l'ancienne version (petite liste perso)
+	minKeepRatio   = 0.3 // une mise à jour qui garde moins de 30 % des domaines est rejetée
+)
+
 // Updater télécharge les listes, les garde en cache sur disque et alimente l'Engine.
 // La liste des sources peut changer à chaud (SetSources), depuis l'interface web.
 type Updater struct {
 	engine   *Engine
-	dir      string // dossier de cache des listes
-	interval time.Duration
+	dir      string       // dossier de cache des listes
+	interval atomic.Int64 // durée entre deux mises à jour (nanosecondes) ; modifiable à chaud
 	client   *http.Client
 
 	mu      sync.Mutex // protège sources et lastErr
@@ -55,16 +63,20 @@ type Updater struct {
 
 // NewUpdater crée un Updater. dir est créé si besoin.
 func NewUpdater(engine *Engine, sources []Source, dir string, interval time.Duration) *Updater {
-	return &Updater{
-		engine:   engine,
-		sources:  sources,
-		dir:      dir,
-		interval: interval,
-		client:   &http.Client{Timeout: 2 * time.Minute},
-		lastErr:  map[string]string{},
-		trigger:  make(chan struct{}, 1),
+	u := &Updater{
+		engine:  engine,
+		sources: sources,
+		dir:     dir,
+		client:  &http.Client{Timeout: 2 * time.Minute},
+		lastErr: map[string]string{},
+		trigger: make(chan struct{}, 1),
 	}
+	u.interval.Store(int64(interval))
+	return u
 }
+
+// SetInterval change la fréquence des mises à jour (prise en compte au prochain cycle).
+func (u *Updater) SetInterval(d time.Duration) { u.interval.Store(int64(d)) }
 
 // SetSources remplace la liste des sources. Appelle Trigger() ensuite pour
 // télécharger les nouvelles.
@@ -122,7 +134,7 @@ func (u *Updater) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(u.interval):
+		case <-time.After(time.Duration(u.interval.Load())):
 		case <-u.trigger:
 		}
 	}
@@ -195,7 +207,32 @@ func (u *Updater) download(ctx context.Context, s Source) error {
 	if n > maxListSize {
 		return fmt.Errorf("liste trop grosse (> %d Mo)", maxListSize>>20)
 	}
+
+	// Contrôle de plausibilité AVANT de remplacer la copie en cache.
+	got, err := countRules(tmp.Name())
+	if err != nil {
+		return err
+	}
+	if got == 0 {
+		return errors.New("liste rejetée : aucun domaine reconnu (le serveur a probablement renvoyé une page d'erreur)")
+	}
+	if old, err := countRules(dst); err == nil && old >= minOldForRatio && float64(got) < float64(old)*minKeepRatio {
+		return fmt.Errorf("liste rejetée : %d domaines contre %d auparavant (baisse de plus de %d %%), copie précédente conservée",
+			got, old, int((1-minKeepRatio)*100))
+	}
 	return os.Rename(tmp.Name(), dst)
+}
+
+// countRules compte les règles (blocage et exceptions) d'un fichier de liste.
+func countRules(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	n := 0
+	err = ParseReader(f, func(string, bool) { n++ })
+	return n, err
 }
 
 // Rebuild construit un nouvel index depuis les fichiers disponibles

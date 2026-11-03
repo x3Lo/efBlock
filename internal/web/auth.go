@@ -108,3 +108,14 @@ func (l *limiter) success(ip string) {
 	delete(l.fails, ip)
 	l.mu.Unlock()
 }
+
+// deleteExcept ferme toutes les sessions sauf celle de keep (après un changement de mot de passe).
+func (s *sessions) deleteExcept(keep string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.m {
+		if k != keep {
+			delete(s.m, k)
+		}
+	}
+}

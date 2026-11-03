@@ -21,6 +21,7 @@ const (
 	ActionCached    = "cached"    // servie depuis le cache
 	ActionForwarded = "forwarded" // transmise à l'upstream
 	ActionError     = "error"     // aucun upstream n'a répondu (SERVFAIL)
+	ActionLocal     = "local"     // nom du réseau local, résolu sans passer par internet
 )
 
 // Entry est une ligne du journal.
@@ -47,7 +48,14 @@ CREATE TABLE IF NOT EXISTS queries (
 	rcode  TEXT    NOT NULL DEFAULT '',
 	dur_us INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_queries_ts ON queries(ts);
+
+-- Index "couvrants" : chacun contient toutes les colonnes dont une statistique
+-- a besoin, donc SQLite lit l'index seul sans retourner chercher les lignes
+-- dans la table (c'est ce retour, ligne par ligne, qui coûtait cher).
+DROP INDEX IF EXISTS idx_queries_ts;
+CREATE INDEX IF NOT EXISTS idx_q_ts_action     ON queries(ts, action);          -- total, répartition, graphique
+CREATE INDEX IF NOT EXISTS idx_q_action_ts_name ON queries(action, ts, name);   -- classements de domaines
+CREATE INDEX IF NOT EXISTS idx_q_ts_client     ON queries(ts, client);          -- classement des clients
 `
 
 const (
@@ -69,7 +77,7 @@ type Logger struct {
 	ch        chan Entry
 	done      chan struct{}
 	dropped   atomic.Uint64
-	retention time.Duration
+	retention atomic.Int64 // durée de conservation (nanosecondes, 0 = illimitée) ; modifiable à chaud
 
 	mu     sync.RWMutex // protège closed : on n'envoie jamais dans un channel fermé
 	closed bool
@@ -93,14 +101,23 @@ func Open(path string, retention time.Duration) (*Logger, error) {
 		return nil, fmt.Errorf("création du schéma: %w", err)
 	}
 	l := &Logger{
-		db:        db,
-		ch:        make(chan Entry, queueSize),
-		done:      make(chan struct{}),
-		retention: retention,
+		db:   db,
+		ch:   make(chan Entry, queueSize),
+		done: make(chan struct{}),
 	}
+	l.retention.Store(int64(retention))
 	l.purge() // nettoie dès le démarrage
 	go l.run()
 	return l, nil
+}
+
+// SetRetention change la durée de conservation (0 = illimitée) et purge tout de suite.
+func (l *Logger) SetRetention(d time.Duration) {
+	if l == nil {
+		return
+	}
+	l.retention.Store(int64(d))
+	go l.purge()
 }
 
 // Log enregistre une requête. Ne bloque jamais. Sans effet sur un Logger nil.
@@ -255,10 +272,11 @@ func (l *Logger) insert(batch []Entry) error {
 
 // purge supprime les lignes plus vieilles que la durée de conservation.
 func (l *Logger) purge() {
-	if l.retention <= 0 {
+	r := time.Duration(l.retention.Load())
+	if r <= 0 {
 		return
 	}
-	cutoff := time.Now().Add(-l.retention).UnixMilli()
+	cutoff := time.Now().Add(-r).UnixMilli()
 	if _, err := l.db.Exec(`DELETE FROM queries WHERE ts < ?`, cutoff); err != nil {
 		slog.Warn("purge du journal", "err", err)
 	}
@@ -268,7 +286,7 @@ func (l *Logger) purge() {
 
 // Summary : compteurs globaux sur une période.
 type Summary struct {
-	Total, Blocked, Cached, Forwarded, Errors int64
+	Total, Blocked, Cached, Forwarded, Errors, Local int64
 }
 
 // BlockedPercent : part des requêtes bloquées, en %.
@@ -287,9 +305,10 @@ func (l *Logger) Summary(since time.Time) (Summary, error) {
 		       COALESCE(SUM(action = 'blocked'),   0),
 		       COALESCE(SUM(action = 'cached'),    0),
 		       COALESCE(SUM(action = 'forwarded'), 0),
-		       COALESCE(SUM(action = 'error'),     0)
+		       COALESCE(SUM(action = 'error'),     0),
+		       COALESCE(SUM(action = 'local'),     0)
 		FROM queries WHERE ts >= ?`, since.UnixMilli()).
-		Scan(&s.Total, &s.Blocked, &s.Cached, &s.Forwarded, &s.Errors)
+		Scan(&s.Total, &s.Blocked, &s.Cached, &s.Forwarded, &s.Errors, &s.Local)
 	return s, err
 }
 
@@ -307,7 +326,8 @@ func (l *Logger) TopBlocked(since time.Time, limit int) ([]Count, error) {
 
 // TopDomains : les domaines les plus demandés (non bloqués).
 func (l *Logger) TopDomains(since time.Time, limit int) ([]Count, error) {
-	return l.top(`SELECT name, COUNT(*) FROM queries WHERE ts >= ? AND action != 'blocked'
+	return l.top(`SELECT name, COUNT(*) FROM queries
+	              WHERE action IN ('forwarded', 'cached', 'local', 'error') AND ts >= ?
 	              GROUP BY name ORDER BY COUNT(*) DESC, name LIMIT ?`, since, limit)
 }
 

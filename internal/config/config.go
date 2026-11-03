@@ -81,6 +81,23 @@ type DNS struct {
 	Upstreams []string      `yaml:"upstreams"`
 	Bootstrap []string      `yaml:"bootstrap"` // DNS classiques, pour résoudre le nom d'un upstream
 	Timeout   time.Duration `yaml:"timeout"`
+
+	// AllowedClients : réseaux autorisés à poser des questions. Sans ça, n'importe
+	// qui pouvant joindre le port 53 pourrait se servir de ton serveur ("résolveur ouvert").
+	AllowedClients []string `yaml:"allowed_clients"`
+	Local          Local    `yaml:"local"`
+
+	AllowedNets []*net.IPNet `yaml:"-"` // AllowedClients analysés (rempli par Load)
+}
+
+// Local regroupe les réglages des noms du réseau local (maison, NAS, imprimante...).
+type Local struct {
+	// Upstream : le résolveur qui connaît les noms du LAN (souvent ta box), ex "192.168.1.1".
+	Upstream string `yaml:"upstream"`
+	// Domains : suffixes envoyés à Upstream et jamais à internet, ex ["lan", "maison"].
+	Domains []string `yaml:"domains"`
+	// Hosts : noms fixes, au format du fichier /etc/hosts : "192.168.1.20 nas.maison nas".
+	Hosts []string `yaml:"hosts"`
 }
 
 // Load lit le fichier YAML, applique les valeurs par défaut puis valide.
@@ -95,78 +112,118 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("YAML invalide: %w", err)
 	}
 
-	// Valeurs par défaut : une config minimale doit suffire pour démarrer.
-	if cfg.DNS.Listen == "" {
-		cfg.DNS.Listen = ":53"
-	}
-	if cfg.DNS.Timeout == 0 {
-		cfg.DNS.Timeout = 3 * time.Second
-	}
-
-	if cfg.Filter.DataDir == "" {
-		cfg.Filter.DataDir = "./data"
-	}
-	if cfg.Filter.BlockMode == "" {
-		cfg.Filter.BlockMode = "zero_ip"
-	}
-	if cfg.Filter.BlockMode != "zero_ip" && cfg.Filter.BlockMode != "nxdomain" {
-		return nil, fmt.Errorf("filter.block_mode: %q invalide (zero_ip ou nxdomain)", cfg.Filter.BlockMode)
-	}
-	if cfg.Filter.UpdateInterval == 0 {
-		cfg.Filter.UpdateInterval = 24 * time.Hour
-	}
-	if cfg.Filter.UpdateInterval < time.Minute {
-		return nil, fmt.Errorf("filter.update_interval: minimum 1m")
-	}
-	for i, l := range cfg.Filter.Lists {
-		if l.URL == "" {
-			return nil, fmt.Errorf("filter.lists[%d]: url manquante", i)
-		}
-		if l.Name == "" {
-			cfg.Filter.Lists[i].Name = l.URL
-		}
-	}
-
-	if cfg.Cache.MaxEntries == 0 {
-		cfg.Cache.MaxEntries = 10000
-	}
-	if cfg.Cache.MaxEntries < 0 {
-		return nil, fmt.Errorf("cache.max_entries: doit être positif")
-	}
-	if cfg.Cache.MaxTTL == 0 {
-		cfg.Cache.MaxTTL = 24 * time.Hour
-	}
-
-	if cfg.Log.Path == "" {
-		cfg.Log.Path = filepath.Join(cfg.Filter.DataDir, "queries.db")
-	}
-	if cfg.Log.RetentionDays == 0 {
-		cfg.Log.RetentionDays = 7
-	}
-
-	if cfg.Web.Listen == "" {
-		cfg.Web.Listen = ":8080"
-	}
-	if len(cfg.Web.AllowedCIDRs) == 0 {
-		cfg.Web.AllowedCIDRs = defaultAllowedCIDRs
-	}
-	for _, c := range cfg.Web.AllowedCIDRs {
-		_, n, err := net.ParseCIDR(strings.TrimSpace(c))
-		if err != nil {
-			return nil, fmt.Errorf("web.allowed_cidrs: %q invalide (attendu ex: 192.168.1.0/24)", c)
-		}
-		cfg.Web.AllowedNets = append(cfg.Web.AllowedNets, n)
-	}
-	if (cfg.Web.TLSCert == "") != (cfg.Web.TLSKey == "") {
-		return nil, fmt.Errorf("web.tls_cert et web.tls_key vont ensemble")
-	}
-
-	if len(cfg.DNS.Bootstrap) == 0 {
-		cfg.DNS.Bootstrap = []string{"1.1.1.1:53", "9.9.9.9:53"}
-	}
-
-	if len(cfg.DNS.Upstreams) == 0 {
-		return nil, fmt.Errorf("dns.upstreams: au moins un résolveur amont est requis")
+	if err := cfg.Finalize(); err != nil {
+		return nil, err
 	}
 	return cfg, nil
+}
+
+// Finalize applique les valeurs par défaut et valide la configuration. Elle est
+// aussi utilisée sur la configuration "effective" (config.yaml + réglages faits
+// depuis l'interface web) : on peut donc l'appeler plusieurs fois sans risque.
+func (c *Config) Finalize() error {
+	var err error
+	// Valeurs par défaut : une config minimale doit suffire pour démarrer.
+	if c.DNS.Listen == "" {
+		c.DNS.Listen = ":53"
+	}
+	if c.DNS.Timeout == 0 {
+		c.DNS.Timeout = 3 * time.Second
+	}
+
+	if c.Filter.DataDir == "" {
+		c.Filter.DataDir = "./data"
+	}
+	if c.Filter.BlockMode == "" {
+		c.Filter.BlockMode = "zero_ip"
+	}
+	if c.Filter.BlockMode != "zero_ip" && c.Filter.BlockMode != "nxdomain" {
+		return fmt.Errorf("filter.block_mode: %q invalide (zero_ip ou nxdomain)", c.Filter.BlockMode)
+	}
+	if c.Filter.UpdateInterval == 0 {
+		c.Filter.UpdateInterval = 24 * time.Hour
+	}
+	if c.Filter.UpdateInterval < time.Minute {
+		return fmt.Errorf("filter.update_interval: minimum 1m")
+	}
+	for i, l := range c.Filter.Lists {
+		if l.URL == "" {
+			return fmt.Errorf("filter.lists[%d]: url manquante", i)
+		}
+		if l.Name == "" {
+			c.Filter.Lists[i].Name = l.URL
+		}
+	}
+
+	if c.Cache.MaxEntries == 0 {
+		c.Cache.MaxEntries = 10000
+	}
+	if c.Cache.MaxEntries < 0 {
+		return fmt.Errorf("cache.max_entries: doit être positif")
+	}
+	if c.Cache.MaxTTL == 0 {
+		c.Cache.MaxTTL = 24 * time.Hour
+	}
+
+	if c.Log.Path == "" {
+		c.Log.Path = filepath.Join(c.Filter.DataDir, "queries.db")
+	}
+	if c.Log.RetentionDays == 0 {
+		c.Log.RetentionDays = 7
+	}
+
+	if c.Web.Listen == "" {
+		c.Web.Listen = ":8080"
+	}
+	if len(c.Web.AllowedCIDRs) == 0 {
+		c.Web.AllowedCIDRs = defaultAllowedCIDRs
+	}
+	if c.Web.AllowedNets, err = parseCIDRs("web.allowed_cidrs", c.Web.AllowedCIDRs); err != nil {
+		return err
+	}
+
+	// Clients DNS autorisés : par défaut, seulement les réseaux privés.
+	if len(c.DNS.AllowedClients) == 0 {
+		c.DNS.AllowedClients = defaultAllowedCIDRs
+	}
+	if c.DNS.AllowedNets, err = parseCIDRs("dns.allowed_clients", c.DNS.AllowedClients); err != nil {
+		return err
+	}
+
+	// Noms locaux.
+	for i, d := range c.DNS.Local.Domains {
+		d = strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".")
+		if d == "" {
+			return fmt.Errorf("dns.local.domains[%d]: domaine vide", i)
+		}
+		c.DNS.Local.Domains[i] = d
+	}
+	if len(c.DNS.Local.Domains) > 0 && c.DNS.Local.Upstream == "" {
+		return fmt.Errorf("dns.local.domains nécessite dns.local.upstream (le résolveur qui connaît ces noms)")
+	}
+	if (c.Web.TLSCert == "") != (c.Web.TLSKey == "") {
+		return fmt.Errorf("web.tls_cert et web.tls_key vont ensemble")
+	}
+
+	if len(c.DNS.Bootstrap) == 0 {
+		c.DNS.Bootstrap = []string{"1.1.1.1:53", "9.9.9.9:53"}
+	}
+
+	if len(c.DNS.Upstreams) == 0 {
+		return fmt.Errorf("dns.upstreams: au moins un résolveur amont est requis")
+	}
+	return nil
+}
+
+// parseCIDRs analyse une liste de réseaux ("192.168.1.0/24", ou "192.168.1.5/32" pour une seule machine).
+func parseCIDRs(field string, list []string) ([]*net.IPNet, error) {
+	var out []*net.IPNet
+	for _, c := range list {
+		_, n, err := net.ParseCIDR(strings.TrimSpace(c))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %q invalide (attendu ex: 192.168.1.0/24)", field, c)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }

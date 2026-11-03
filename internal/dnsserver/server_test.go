@@ -12,6 +12,7 @@ import (
 
 	"github.com/x3Lo/efBlock/internal/cache"
 	"github.com/x3Lo/efBlock/internal/filter"
+	"github.com/x3Lo/efBlock/internal/localdns"
 	"github.com/x3Lo/efBlock/internal/querylog"
 	"github.com/x3Lo/efBlock/internal/upstream"
 )
@@ -183,5 +184,118 @@ func TestQueriesAreLogged(t *testing.T) {
 	}
 	if actions["ads.example.com/blocked"] != "ads.example.com" {
 		t.Errorf("la règle qui a bloqué doit être enregistrée, obtenu %q", actions["ads.example.com/blocked"])
+	}
+}
+
+// Un client hors des réseaux autorisés reçoit REFUSED et n'atteint jamais l'upstream.
+func TestClientAccessControl(t *testing.T) {
+	upAddr, hits := startFakeUpstream(t)
+
+	run := func(nets []string) *dns.Msg {
+		fwd, _ := upstream.New([]string{upAddr}, 2*time.Second, nil)
+		var parsed []*net.IPNet
+		for _, c := range nets {
+			_, n, _ := net.ParseCIDR(c)
+			parsed = append(parsed, n)
+		}
+		addr := freeAddr(t)
+		srv := New(Options{Addr: addr, Upstream: fwd, Filter: filter.NewEngine(), AllowedClients: parsed})
+		go srv.Start()
+		t.Cleanup(srv.Shutdown)
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			m := new(dns.Msg).SetQuestion("example.com.", dns.TypeA)
+			if r, err := dns.Exchange(m, addr); err == nil {
+				return r
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatal("le serveur n'a pas répondu")
+		return nil
+	}
+
+	// Les requêtes de test viennent de 127.0.0.1 : autorisé par 127.0.0.0/8, refusé par 192.168.0.0/16.
+	hits.Store(0)
+	if r := run([]string{"192.168.0.0/16"}); r.Rcode != dns.RcodeRefused || len(r.Answer) != 0 {
+		t.Errorf("client hors réseau: rcode=%s, attendu REFUSED", dns.RcodeToString[r.Rcode])
+	}
+	if hits.Load() != 0 {
+		t.Error("un client refusé ne doit jamais déclencher de requête vers l'upstream")
+	}
+	if r := run([]string{"192.168.0.0/16", "127.0.0.0/8"}); r.Rcode != dns.RcodeSuccess || len(r.Answer) != 1 {
+		t.Errorf("client autorisé: rcode=%s, attendu NOERROR avec une réponse", dns.RcodeToString[r.Rcode])
+	}
+}
+
+// Les réglages changent à chaud, sans redémarrer le serveur.
+func TestHotReconfiguration(t *testing.T) {
+	upA, hitsA := startFakeUpstream(t)
+	upB, hitsB := startFakeUpstream(t)
+
+	fwdA, _ := upstream.New([]string{upA}, time.Second, nil)
+	fwdB, _ := upstream.New([]string{upB}, time.Second, nil)
+	addr := freeAddr(t)
+	srv := New(Options{Addr: addr, Upstream: fwdA, Filter: filter.NewEngine()})
+	go srv.Start()
+	t.Cleanup(srv.Shutdown)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := dns.Exchange(new(dns.Msg).SetQuestion("ready.test.", dns.TypeA), addr); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	hitsA.Store(0)
+
+	ask(t, addr, "un.example.com.", dns.TypeA)
+	if hitsA.Load() != 1 || hitsB.Load() != 0 {
+		t.Fatalf("avant: A=%d B=%d", hitsA.Load(), hitsB.Load())
+	}
+
+	// 1. Changement d'upstream.
+	srv.SetUpstream(fwdB)
+	ask(t, addr, "deux.example.com.", dns.TypeA)
+	if hitsB.Load() != 1 {
+		t.Errorf("après SetUpstream, l'upstream B aurait dû recevoir la requête (B=%d)", hitsB.Load())
+	}
+
+	// 2. Activation du cache : la 2e requête identique ne sort plus.
+	srv.SetCache(cache.New(100, 0))
+	ask(t, addr, "trois.example.com.", dns.TypeA)
+	ask(t, addr, "trois.example.com.", dns.TypeA)
+	if hitsB.Load() != 2 {
+		t.Errorf("avec le cache, 2 requêtes identiques ne doivent faire qu'un aller-retour (B=%d, attendu 2 au total)", hitsB.Load())
+	}
+	srv.SetCache(nil)
+	ask(t, addr, "trois.example.com.", dns.TypeA)
+	if hitsB.Load() != 3 {
+		t.Errorf("cache retiré : la requête doit repartir (B=%d)", hitsB.Load())
+	}
+
+	// 3. Noms locaux : répondus sans toucher l'upstream.
+	z, err := localdns.New("", nil, []string{"192.168.1.20 nas.maison"}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetLocal(z)
+	before := hitsB.Load()
+	r := ask(t, addr, "nas.maison.", dns.TypeA)
+	if len(r.Answer) != 1 || r.Answer[0].(*dns.A).A.String() != "192.168.1.20" || hitsB.Load() != before {
+		t.Errorf("nom local: %v (B passé de %d à %d)", r.Answer, before, hitsB.Load())
+	}
+	// Le cas observé en vrai : la recherche inverse d'une IP privée ne doit pas sortir.
+	r = ask(t, addr, "10.50.168.192.in-addr.arpa.", dns.TypePTR)
+	if r.Rcode != dns.RcodeNameError || hitsB.Load() != before {
+		t.Errorf("PTR privé : rcode=%s, requêtes envoyées à l'upstream: %d (attendu NXDOMAIN, 0)", dns.RcodeToString[r.Rcode], hitsB.Load()-before)
+	}
+
+	// 4. Mode de blocage.
+	srv.opts.Filter.SetUserRules(nil, []string{"pub.example.com"})
+	if r := ask(t, addr, "pub.example.com.", dns.TypeA); len(r.Answer) != 1 || r.Rcode != dns.RcodeSuccess {
+		t.Errorf("mode 0.0.0.0: %+v", r)
+	}
+	srv.SetNXDomain(true)
+	if r := ask(t, addr, "pub.example.com.", dns.TypeA); r.Rcode != dns.RcodeNameError {
+		t.Errorf("mode NXDOMAIN: rcode=%s", dns.RcodeToString[r.Rcode])
 	}
 }
