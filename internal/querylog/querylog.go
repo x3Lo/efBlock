@@ -73,6 +73,11 @@ type Logger struct {
 
 	mu     sync.RWMutex // protège closed : on n'envoie jamais dans un channel fermé
 	closed bool
+
+	// Abonnés au flux en direct (voir Subscribe).
+	subMu    sync.RWMutex
+	subs     map[chan Entry]struct{}
+	subCount atomic.Int32 // évite de prendre le verrou quand personne n'écoute
 }
 
 // Open ouvre (ou crée) la base. retention = durée de conservation (0 = illimitée).
@@ -113,6 +118,52 @@ func (l *Logger) Log(e Entry) {
 	default:
 		l.dropped.Add(1) // file pleine
 	}
+	l.publish(e)
+}
+
+// subBuffer : nombre d'entrées qu'un abonné peut avoir en retard avant d'en perdre.
+const subBuffer = 256
+
+// Subscribe renvoie un canal qui reçoit chaque requête au moment où elle est
+// enregistrée (journal "en direct"), et une fonction pour se désabonner.
+//
+// Comme pour l'écriture disque, un abonné lent ne doit jamais ralentir le DNS :
+// si son canal est plein, les entrées en trop sont simplement perdues pour lui.
+func (l *Logger) Subscribe() (<-chan Entry, func()) {
+	ch := make(chan Entry, subBuffer)
+	l.subMu.Lock()
+	if l.subs == nil {
+		l.subs = map[chan Entry]struct{}{}
+	}
+	l.subs[ch] = struct{}{}
+	l.subCount.Store(int32(len(l.subs)))
+	l.subMu.Unlock()
+
+	cancel := func() {
+		l.subMu.Lock()
+		defer l.subMu.Unlock()
+		if _, ok := l.subs[ch]; ok { // déjà retiré (par Close) : rien à faire
+			delete(l.subs, ch)
+			l.subCount.Store(int32(len(l.subs)))
+			close(ch)
+		}
+	}
+	return ch, cancel
+}
+
+// publish envoie e à tous les abonnés, sans jamais attendre.
+func (l *Logger) publish(e Entry) {
+	if l.subCount.Load() == 0 {
+		return
+	}
+	l.subMu.RLock()
+	defer l.subMu.RUnlock()
+	for ch := range l.subs {
+		select {
+		case ch <- e:
+		default: // abonné en retard : on l'ignore
+		}
+	}
 }
 
 // Close vide la file, écrit les dernières lignes et ferme la base.
@@ -128,6 +179,15 @@ func (l *Logger) Close() error {
 	l.closed = true
 	close(l.ch)
 	l.mu.Unlock()
+
+	// Ferme les flux en direct : les clients connectés voient la fin du flux.
+	l.subMu.Lock()
+	for ch := range l.subs {
+		close(ch)
+		delete(l.subs, ch)
+	}
+	l.subCount.Store(0)
+	l.subMu.Unlock()
 	<-l.done // attend la fin de l'écriture
 	if n := l.dropped.Load(); n > 0 {
 		slog.Warn("entrées de log abandonnées (file pleine)", "nombre", n)

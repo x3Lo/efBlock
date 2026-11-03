@@ -1,129 +1,86 @@
+@import "tailwindcss";
+
+/*
+ * Thème. Choix volontaires : papier légèrement chaud plutôt que gris-bleu,
+ * encre presque noire comme couleur principale, angles quasi droits, aucune
+ * ombre ni dégradé. La seule couleur vive est celle des données bloquées.
+ */
 :root {
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --text: #1b1f27;
-  --muted: #5d6675;
-  --border: #dfe3ea;
-  --accent: #2f6fed;
-  --accent-text: #ffffff;
-  --blocked: #d2432f;
-  --ok: #1f8a4c;
-  --warn: #b7791f;
-  --bar: #c7d3ee;
-  color-scheme: light dark;
+  --radius: 0.25rem;
+  --background: oklch(0.972 0.005 85);
+  --foreground: oklch(0.205 0.012 60);
+  --card: oklch(0.992 0.003 85);
+  --card-foreground: oklch(0.205 0.012 60);
+  --muted: oklch(0.945 0.006 85);
+  --muted-foreground: oklch(0.505 0.012 70);
+  --border: oklch(0.875 0.009 85);
+  --input: oklch(0.835 0.01 85);
+  --ring: oklch(0.55 0.012 70);
+  --primary: oklch(0.225 0.012 60);
+  --primary-foreground: oklch(0.975 0.005 85);
+  --destructive: oklch(0.52 0.18 29);
+  --blocked: oklch(0.6 0.165 45);
+  --ok: oklch(0.52 0.11 150);
+  --warn: oklch(0.62 0.12 80);
+  --chart-1: oklch(0.72 0.018 75);
+  --chart-2: var(--blocked);
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #12151b;
-    --surface: #1b2029;
-    --text: #e8ebf1;
-    --muted: #98a2b3;
-    --border: #2b3240;
-    --accent: #6b9bff;
-    --accent-text: #0c1020;
-    --blocked: #ff7a68;
-    --ok: #4cc88a;
-    --warn: #e0b04a;
-    --bar: #33415f;
+    --background: oklch(0.175 0.006 60);
+    --foreground: oklch(0.925 0.006 85);
+    --card: oklch(0.205 0.007 60);
+    --card-foreground: oklch(0.925 0.006 85);
+    --muted: oklch(0.245 0.008 60);
+    --muted-foreground: oklch(0.69 0.01 75);
+    --border: oklch(0.31 0.009 60);
+    --input: oklch(0.38 0.01 60);
+    --ring: oklch(0.6 0.01 70);
+    --primary: oklch(0.925 0.006 85);
+    --primary-foreground: oklch(0.2 0.01 60);
+    --destructive: oklch(0.7 0.16 29);
+    --blocked: oklch(0.74 0.15 50);
+    --ok: oklch(0.72 0.12 150);
+    --warn: oklch(0.78 0.12 85);
+    --chart-1: oklch(0.45 0.012 70);
   }
 }
-* { box-sizing: border-box; }
-html, body { margin: 0; }
-body {
-  background: var(--bg);
-  color: var(--text);
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-blocked: var(--blocked);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --radius-sm: calc(var(--radius) - 1px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 1px);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 }
-a { color: var(--accent); }
-main { max-width: 1100px; margin: 0 auto; padding: 16px; }
-h1 { font-size: 1.4rem; margin: 8px 0 16px; }
-h2 { font-size: 1.05rem; margin: 0 0 12px; }
 
-header.top {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-background text-foreground font-sans text-sm antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
 }
-header.top .in {
-  max-width: 1100px; margin: 0 auto; padding: 10px 16px;
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-}
-.brand { font-weight: 700; font-size: 1.1rem; }
-nav { display: flex; gap: 4px; flex: 1; }
-nav a {
-  padding: 6px 12px; border-radius: 8px; text-decoration: none; color: var(--muted);
-}
-nav a[aria-current="page"] { background: var(--bg); color: var(--text); font-weight: 600; }
-nav a:hover { color: var(--text); }
-
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; padding: 16px; margin-bottom: 16px;
-}
-.grid { display: grid; gap: 16px; }
-.grid.stats { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-.grid.two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-.stat .label { color: var(--muted); font-size: 0.85rem; }
-.stat .value { font-size: 1.9rem; font-weight: 700; line-height: 1.2; }
-.stat .sub { color: var(--muted); font-size: 0.85rem; }
-
-button, .btn {
-  font: inherit; cursor: pointer; border-radius: 8px; padding: 7px 14px;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text);
-}
-button:hover:not(:disabled) { border-color: var(--accent); }
-button:disabled { opacity: 0.55; cursor: default; }
-button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
-button.danger { color: var(--blocked); }
-button.small { padding: 3px 9px; font-size: 0.85rem; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-input[type="text"], input[type="password"], input[type="search"], select {
-  font: inherit; padding: 7px 10px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text);
-}
-input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); }
-.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.row.grow input { flex: 1; min-width: 180px; }
-.spacer { flex: 1; }
-
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: .03em; }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-td.name { word-break: break-all; }
-.table-wrap { overflow-x: auto; }
-.muted { color: var(--muted); }
-.small { font-size: 0.85rem; }
-.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88rem; }
-
-.badge {
-  display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 0.78rem;
-  font-weight: 600; border: 1px solid currentColor; white-space: nowrap;
-}
-.badge.blocked { color: var(--blocked); }
-.badge.cached, .badge.forwarded, .badge.on { color: var(--ok); }
-.badge.error, .badge.paused { color: var(--warn); }
-.badge.off { color: var(--blocked); }
-
-.share { position: relative; }
-.share .fill {
-  position: absolute; inset: 2px auto 2px 0; background: var(--bar); border-radius: 4px; z-index: 0; opacity: .7;
-}
-.share > span { position: relative; z-index: 1; }
-
-.chart { display: flex; align-items: flex-end; gap: 3px; height: 130px; }
-.chart .col { flex: 1; min-width: 4px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
-.chart .total { background: var(--bar); border-radius: 3px 3px 0 0; position: relative; min-height: 1px; }
-.chart .blk { background: var(--blocked); position: absolute; bottom: 0; left: 0; right: 0; border-radius: 0 0 0 0; }
-.axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.8rem; margin-top: 4px; }
-.legend { display: flex; gap: 16px; color: var(--muted); font-size: .85rem; margin-top: 6px; }
-.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
-
-.notice { padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); margin-bottom: 14px; }
-.notice.error { border-color: var(--blocked); color: var(--blocked); }
-.notice.ok { border-color: var(--ok); color: var(--ok); }
-
-.login { max-width: 360px; margin: 14vh auto; }
-.login form { display: flex; flex-direction: column; gap: 12px; }
-.login label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
-.center { text-align: center; padding: 40px 0; color: var(--muted); }

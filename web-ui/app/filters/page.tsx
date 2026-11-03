@@ -1,38 +1,44 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, DomainEntry, fmtDateTime, ListsResponse, nf } from "../../lib/api";
 
-type Msg = { kind: "ok" | "error"; text: string } | null;
+import ConfirmButton from "@/components/confirm-button";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { api, DomainEntry, fmtDateTime, ListsResponse, nf } from "@/lib/api";
+
+type Msg = { error: boolean; text: string } | null;
 
 export default function Filters() {
   const [msg, setMsg] = useState<Msg>(null);
-  const fail = (e: unknown) => setMsg({ kind: "error", text: e instanceof Error ? e.message : "Erreur" });
+  const fail = useCallback((e: unknown) => setMsg({ error: true, text: e instanceof Error ? e.message : "Erreur" }), []);
+  const info = useCallback((text: string) => setMsg({ error: false, text }), []);
 
   return (
-    <>
-      <h1>Filtres</h1>
+    <div className="flex flex-col gap-8">
+      <h1 className="text-lg font-semibold tracking-tight">Filtres</h1>
       {msg && (
-        <div className={`notice ${msg.kind}`} role={msg.kind === "error" ? "alert" : "status"}>
+        <p role={msg.error ? "alert" : "status"} className={`-mt-4 text-sm ${msg.error ? "text-destructive" : "text-muted-foreground"}`}>
           {msg.text}
-        </div>
+        </p>
       )}
-      <FilterLists onError={fail} onInfo={(t) => setMsg({ kind: "ok", text: t })} />
-      <div className="grid two">
+      <FilterLists onError={fail} onInfo={info} />
+      <div className="grid gap-8 lg:grid-cols-2">
         <DomainList
           kind="allowlist"
-          title="Allowlist : jamais bloqués"
-          help="Ces domaines (et leurs sous-domaines) ne sont jamais bloqués, même s'ils sont dans une liste."
+          title="Allowlist"
+          help="Jamais bloqués, sous-domaines compris, même s'ils figurent dans une liste."
           onError={fail}
         />
         <DomainList
           kind="blocklist"
-          title="Blocklist : toujours bloqués"
-          help="Ces domaines (et leurs sous-domaines) sont toujours bloqués, en plus des listes."
+          title="Blocklist"
+          help="Toujours bloqués, sous-domaines compris, en plus des listes."
           onError={fail}
         />
       </div>
-    </>
+    </div>
   );
 }
 
@@ -55,9 +61,7 @@ function FilterLists({ onError, onInfo }: { onError: (e: unknown) => void; onInf
   }, [load]);
 
   // Le téléchargement est asynchrone : on recharge le statut quelques fois.
-  function refreshSoon() {
-    [1500, 5000, 12000].forEach((ms) => setTimeout(load, ms));
-  }
+  const refreshSoon = () => [1500, 5000, 12000].forEach((ms) => setTimeout(load, ms));
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -66,7 +70,7 @@ function FilterLists({ onError, onInfo }: { onError: (e: unknown) => void; onInf
       setData(await api<ListsResponse>("/api/lists", { method: "POST", body: { name, url } }));
       setName("");
       setUrl("");
-      onInfo("Liste ajoutée, téléchargement en cours…");
+      onInfo("Liste ajoutée, téléchargement en cours.");
       refreshSoon();
     } catch (err) {
       onError(err);
@@ -75,10 +79,9 @@ function FilterLists({ onError, onInfo }: { onError: (e: unknown) => void; onInf
     }
   }
 
-  async function remove(l: { url: string; name: string }) {
-    if (!confirm(`Retirer la liste « ${l.name} » ?`)) return;
+  async function remove(u: string) {
     try {
-      setData(await api<ListsResponse>(`/api/lists?url=${encodeURIComponent(l.url)}`, { method: "DELETE" }));
+      setData(await api<ListsResponse>(`/api/lists?url=${encodeURIComponent(u)}`, { method: "DELETE" }));
       refreshSoon();
     } catch (err) {
       onError(err);
@@ -89,7 +92,7 @@ function FilterLists({ onError, onInfo }: { onError: (e: unknown) => void; onInf
     setBusy(true);
     try {
       await api("/api/lists/update", { method: "POST" });
-      onInfo("Mise à jour lancée…");
+      onInfo("Mise à jour des listes lancée.");
       refreshSoon();
     } catch (err) {
       onError(err);
@@ -99,55 +102,76 @@ function FilterLists({ onError, onInfo }: { onError: (e: unknown) => void; onInf
   }
 
   return (
-    <section className="card">
-      <div className="row">
-        <h2 style={{ margin: 0 }}>Listes de filtres</h2>
-        <span className="spacer" />
-        {data && <span className="muted small">{nf.format(data.totalBlocked)} domaines au total</span>}
-        <button disabled={busy} onClick={updateNow}>Mettre à jour maintenant</button>
+    <section>
+      <div className="mb-1 flex flex-wrap items-center gap-3">
+        <h2 className="text-sm font-semibold">Listes de filtres</h2>
+        {data && <span className="text-xs text-muted-foreground">{nf.format(data.totalBlocked)} domaines au total</span>}
+        <span className="flex-1" />
+        <Button variant="outline" size="sm" disabled={busy} onClick={updateNow}>
+          Mettre à jour maintenant
+        </Button>
       </div>
 
-      <div className="table-wrap" style={{ margin: "12px 0" }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Liste</th>
-              <th className="num">Domaines</th>
-              <th>Mise à jour</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {data?.lists.map((l) => (
-              <tr key={l.url}>
-                <td className="name">
-                  <strong>{l.name}</strong> {l.source === "config" && <span className="muted small">(config.yaml)</span>}
-                  <div className="muted small mono">{l.url}</div>
-                  {l.error && <div className="small" style={{ color: "var(--blocked)" }}>⚠ {l.error}</div>}
-                </td>
-                <td className="num">{nf.format(l.blocked)}</td>
-                <td className="muted small">{l.updatedAt ? fmtDateTime(l.updatedAt) : "pas encore téléchargée"}</td>
-                <td>
-                  {l.source === "ui" && (
-                    <button className="small danger" onClick={() => remove(l)}>Retirer</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {data && data.lists.length === 0 && (
-              <tr><td colSpan={4} className="muted">Aucune liste. Ajoute-en une ci-dessous.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead>Liste</TableHead>
+            <TableHead className="text-right">Domaines</TableHead>
+            <TableHead>Mise à jour</TableHead>
+            <TableHead />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {data?.lists.map((l) => (
+            <TableRow key={l.url}>
+              <TableCell>
+                <div className="font-medium">
+                  {l.name} {l.source === "config" && <span className="text-xs font-normal text-muted-foreground">(config.yaml)</span>}
+                </div>
+                <div className="font-mono text-xs break-all text-muted-foreground">{l.url}</div>
+                {l.error && <div className="text-xs text-destructive">Erreur : {l.error}</div>}
+              </TableCell>
+              <TableCell className="text-right font-mono text-xs tabular-nums">{nf.format(l.blocked)}</TableCell>
+              <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                {l.updatedAt ? fmtDateTime(l.updatedAt) : "pas encore téléchargée"}
+              </TableCell>
+              <TableCell className="text-right">
+                {l.source === "ui" && <ConfirmButton ariaLabel={`Retirer la liste ${l.name}`} onConfirm={() => remove(l.url)} />}
+              </TableCell>
+            </TableRow>
+          ))}
+          {data && data.lists.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={4} className="py-4 text-muted-foreground">
+                Aucune liste.
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
 
-      <form className="row grow" onSubmit={add}>
-        <input type="text" placeholder="Nom (facultatif)" aria-label="Nom de la liste" value={name} onChange={(e) => setName(e.target.value)} style={{ maxWidth: 200 }} />
-        <input type="text" placeholder="https://…/hosts.txt" aria-label="Adresse de la liste" value={url} onChange={(e) => setUrl(e.target.value)} required />
-        <button className="primary" disabled={busy || !url}>Ajouter</button>
+      <form className="mt-3 flex flex-wrap gap-2" onSubmit={add}>
+        <Input
+          type="text"
+          placeholder="Nom (facultatif)"
+          aria-label="Nom de la liste"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-44 flex-none"
+        />
+        <Input
+          type="text"
+          placeholder="https://exemple.org/hosts.txt"
+          aria-label="Adresse de la liste"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          className="min-w-56 flex-1"
+          required
+        />
+        <Button disabled={busy || !url}>Ajouter</Button>
       </form>
-      <p className="muted small" style={{ marginBottom: 0 }}>
-        Formats acceptés : hosts (<code>0.0.0.0 domaine</code>), adblock (<code>||domaine^</code>) ou un domaine par ligne.
+      <p className="mt-2 text-xs text-muted-foreground">
+        Formats acceptés : hosts (<code>0.0.0.0 domaine</code>), adblock (<code>||domaine^</code>), ou un domaine par ligne.
       </p>
     </section>
   );
@@ -197,32 +221,42 @@ function DomainList({
   }
 
   return (
-    <section className="card" style={{ margin: 0 }}>
-      <h2>{title}</h2>
-      <p className="muted small" style={{ marginTop: -6 }}>{help}</p>
-      <form className="row grow" onSubmit={add}>
-        <input type="text" placeholder="exemple.com" aria-label="Domaine à ajouter" value={domain} onChange={(e) => setDomain(e.target.value)} autoCapitalize="off" spellCheck={false} />
-        <button className="primary" disabled={busy || !domain.trim()}>Ajouter</button>
+    <section>
+      <h2 className="text-sm font-semibold">{title}</h2>
+      <p className="mt-0.5 mb-3 text-xs text-muted-foreground">{help}</p>
+      <form className="flex gap-2" onSubmit={add}>
+        <Input
+          type="text"
+          placeholder="exemple.com"
+          aria-label={`Domaine à ajouter à la ${title.toLowerCase()}`}
+          value={domain}
+          onChange={(e) => setDomain(e.target.value)}
+          autoCapitalize="off"
+          spellCheck={false}
+        />
+        <Button disabled={busy || !domain.trim()}>Ajouter</Button>
       </form>
-      <div className="table-wrap" style={{ marginTop: 8 }}>
-        <table>
-          <tbody>
-            {entries.map((e) => (
-              <tr key={e.domain}>
-                <td className="name mono">{e.domain}</td>
-                <td style={{ textAlign: "right" }}>
-                  {e.source === "config" ? (
-                    <span className="muted small">config.yaml</span>
-                  ) : (
-                    <button className="small danger" onClick={() => remove(e.domain)} aria-label={`Retirer ${e.domain}`}>Retirer</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {entries.length === 0 && <tr><td className="muted">Aucun domaine.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+      <Table className="mt-2">
+        <TableBody>
+          {entries.map((e) => (
+            <TableRow key={e.domain}>
+              <TableCell className="font-mono text-xs break-all">{e.domain}</TableCell>
+              <TableCell className="text-right">
+                {e.source === "config" ? (
+                  <span className="text-xs text-muted-foreground">config.yaml</span>
+                ) : (
+                  <ConfirmButton ariaLabel={`Retirer ${e.domain}`} onConfirm={() => remove(e.domain)} />
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+          {entries.length === 0 && (
+            <TableRow>
+              <TableCell className="py-3 text-muted-foreground">Aucun domaine.</TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
     </section>
   );
 }

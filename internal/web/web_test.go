@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"net"
@@ -302,5 +303,69 @@ func TestSecurityHeaders(t *testing.T) {
 	rec = e.do("GET", "/api/session", "192.168.1.5:1", nil, nil, false)
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Error("les réponses de l'API ne doivent pas être mises en cache")
+	}
+}
+
+// Le flux en direct exige une session, puis envoie chaque requête dès qu'elle est enregistrée.
+func TestLiveStream(t *testing.T) {
+	e := newEnv(t)
+	ts := httptest.NewServer(e.h)
+	defer ts.Close()
+
+	// Sans session : refusé.
+	resp, err := http.Get(ts.URL + "/api/queries/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("flux sans session: %d, attendu 401", resp.StatusCode)
+	}
+
+	// Avec session.
+	req, _ := http.NewRequest("GET", ts.URL+"/api/queries/stream", nil)
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: e.srv.sessions.create()})
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("flux: %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+
+	time.Sleep(100 * time.Millisecond) // laisse le temps à l'abonnement de se faire
+	e.log.Log(querylog.Entry{Time: time.Now(), Client: "192.168.50.20", Name: "direct.example.com", QType: "A", Action: querylog.ActionBlocked, Rule: "example.com", Rcode: "NOERROR"})
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				t.Fatal("flux fermé avant d'avoir reçu l'entrée")
+			}
+			if !strings.HasPrefix(line, "data: ") {
+				continue // commentaire ": connecté"
+			}
+			var got entryJSON
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Name != "direct.example.com" || got.Action != "blocked" || got.Rule != "example.com" {
+				t.Errorf("entrée reçue: %+v", got)
+			}
+			return
+		case <-deadline:
+			t.Fatal("aucune entrée reçue en direct")
+		}
 	}
 }

@@ -70,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stats", s.auth(s.handleStats))
 	mux.HandleFunc("POST /api/blocking", s.auth(s.handleBlocking))
 	mux.HandleFunc("GET /api/queries", s.auth(s.handleQueries))
+	mux.HandleFunc("GET /api/queries/stream", s.auth(s.handleQueryStream))
 	mux.HandleFunc("GET /api/allowlist", s.auth(s.handleDomains(store.Allow)))
 	mux.HandleFunc("POST /api/allowlist", s.auth(s.handleAddDomain(store.Allow)))
 	mux.HandleFunc("DELETE /api/allowlist", s.auth(s.handleRemoveDomain(store.Allow)))

@@ -200,3 +200,63 @@ func TestRecentSearchAndTimeline(t *testing.T) {
 		t.Errorf("total=%d blocked=%d, attendu 4 et 1", total, blocked)
 	}
 }
+
+func TestSubscribeReceivesLiveEntries(t *testing.T) {
+	l := openTest(t, 0)
+	ch, cancel := l.Subscribe()
+	defer cancel()
+
+	l.Log(entry("c1", "live.example.com", ActionBlocked, 0))
+	select {
+	case e := <-ch:
+		if e.Name != "live.example.com" || e.Action != ActionBlocked {
+			t.Errorf("entrée reçue: %+v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("aucune entrée reçue en direct")
+	}
+
+	cancel()
+	cancel() // double annulation sans effet
+	if _, ok := <-ch; ok {
+		t.Error("le canal doit être fermé après désabonnement")
+	}
+	l.Log(entry("c1", "apres.example.com", ActionForwarded, 0)) // ne doit pas paniquer
+}
+
+// Un abonné qui ne lit jamais ne doit pas ralentir Log().
+func TestSlowSubscriberNeverBlocksLog(t *testing.T) {
+	l := openTest(t, 0)
+	_, cancel := l.Subscribe() // personne ne lit ce canal
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < subBuffer*3; i++ {
+			l.Log(entry("c", "x.example.com", ActionForwarded, 0))
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("un abonné lent a bloqué Log()")
+	}
+}
+
+func TestCloseEndsSubscriptions(t *testing.T) {
+	l, err := Open(filepath.Join(t.TempDir(), "q.db"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, _ := l.Subscribe()
+	l.Close()
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Error("canal inattendu: une entrée au lieu d'une fermeture")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close() doit fermer les flux en direct")
+	}
+}

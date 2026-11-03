@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+
 import "./globals.css";
-import AuthGate from "../components/AuthGate";
+import AuthGate from "@/components/auth-gate";
 
 export const metadata: Metadata = {
   title: "efBlock",

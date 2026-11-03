@@ -1,10 +1,12 @@
-# 🛡️ efBlock
+# efBlock
 
 Un **bloqueur de publicités et de traqueurs au niveau DNS**, écrit en Go, dans l'esprit de
 Pi-hole / AdGuard Home. Il tourne sur une petite VM ou un Raspberry Pi et protège tous les
 appareils du réseau (PC, téléphones, invités) sans rien installer sur eux.
 
 ![Tableau de bord](docs/dashboard.png)
+
+![Journal en direct](docs/journal.png)
 
 ## Fonctionnalités
 
@@ -18,8 +20,9 @@ appareils du réseau (PC, téléphones, invités) sans rien installer sur eux.
   avec basculement de l'un à l'autre.
 - **Cache** qui respecte les TTL, avec cache négatif (RFC 2308) et éviction LRU.
 - **Journal des requêtes** (SQLite) : domaine, client, résultat, durée. Purge automatique.
-- **Interface web** (Next.js) : tableau de bord, pause du blocage (5 min / 30 min / 1 h), journal,
-  gestion des listes et des domaines. Protégée par mot de passe, réservée au réseau local.
+- **Interface web** (Next.js, shadcn/ui) : tableau de bord avec graphique, pause du blocage (5 min / 30 min / 1 h),
+  **journal des requêtes en direct**, gestion des listes et des domaines. Protégée par mot de passe,
+  réservée au réseau local.
 - **Léger** : un seul binaire (interface comprise) ; environ 27 Mo de RAM avec 78 000 domaines chargés (StevenBlack), un peu plus avec des listes plus grosses.
 - **Service systemd** qui redémarre tout seul, sans droits root.
 
@@ -66,7 +69,7 @@ make build
 ```
 
 Le dépôt est privé : Git te demande ton identifiant, puis un *jeton d'accès personnel*
-(GitHub → Settings → Developer settings → Fine-grained tokens, permission *Contents : lecture seule*)
+(GitHub, Settings, Developer settings, Fine-grained tokens, permission *Contents : lecture seule*)
 à la place du mot de passe.
 
 Node.js n'est **pas** nécessaire : l'interface est déjà compilée et embarquée dans le binaire.
@@ -253,7 +256,7 @@ internal/upstream/    clients DNS classique, DoT, DoH
 internal/querylog/    journal SQLite et statistiques
 internal/store/       réglages modifiables depuis l'interface (state.json)
 internal/web/         API JSON sécurisée + interface embarquée (dist/)
-web-ui/               source de l'interface (Next.js, export statique)
+web-ui/               source de l'interface (Next.js, Tailwind, composants shadcn/ui, Recharts ; export statique)
 deploy/               service systemd, script d'installation, config d'exemple
 ```
 

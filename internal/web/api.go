@@ -3,9 +3,11 @@ package web
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -289,6 +291,77 @@ func (s *Server) handleQueries(w http.ResponseWriter, r *http.Request) {
 		out = append(out, entryJSON{e.Time, e.Client, e.Name, e.QType, e.Action, e.Rule, e.Rcode, e.Duration.Microseconds()})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"logEnabled": true, "entries": out})
+}
+
+// maxStreams limite les flux en direct simultanés (chacun garde une connexion ouverte).
+const maxStreams = 20
+
+var activeStreams atomic.Int32
+
+// handleQueryStream envoie les requêtes DNS en direct (Server-Sent Events).
+//
+// Concept : SSE est un format HTTP très simple pour qu'un serveur pousse des
+// messages au navigateur. La réponse ne se termine jamais ; chaque message est
+// une ligne "data: {...}" suivie d'une ligne vide. Le navigateur le gère avec
+// l'objet EventSource et se reconnecte tout seul en cas de coupure.
+func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
+	if s.d.Log == nil {
+		writeError(w, http.StatusNotFound, "journal désactivé")
+		return
+	}
+	if activeStreams.Add(1) > maxStreams {
+		activeStreams.Add(-1)
+		writeError(w, http.StatusTooManyRequests, "trop de flux ouverts")
+		return
+	}
+	defer activeStreams.Add(-1)
+
+	rc := http.NewResponseController(w)
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no") // demande aux éventuels proxys de ne pas mettre en tampon
+	w.WriteHeader(http.StatusOK)
+
+	// Le serveur HTTP impose un délai d'écriture global (WriteTimeout) qui
+	// couperait le flux : on le repousse avant chaque écriture.
+	write := func(format string, args ...any) bool {
+		_ = rc.SetWriteDeadline(time.Now().Add(15 * time.Second))
+		if _, err := fmt.Fprintf(w, format, args...); err != nil {
+			return false
+		}
+		return rc.Flush() == nil
+	}
+	if !write(": connecté\n\n") {
+		return
+	}
+
+	ch, cancel := s.d.Log.Subscribe()
+	defer cancel()
+	cookie, _ := r.Cookie(cookieName)
+	ping := time.NewTicker(15 * time.Second)
+	defer ping.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case e, ok := <-ch:
+			if !ok {
+				return // journal fermé
+			}
+			b, _ := json.Marshal(entryJSON{e.Time, e.Client, e.Name, e.QType, e.Action, e.Rule, e.Rcode, e.Duration.Microseconds()})
+			if !write("data: %s\n\n", b) {
+				return
+			}
+		case <-ping.C:
+			// Message "vide" pour garder la connexion vivante, et vérification
+			// que la session n'a pas été fermée (déconnexion, expiration).
+			if cookie == nil || !s.sessions.valid(cookie.Value) || !write(": ping\n\n") {
+				return
+			}
+		}
+	}
 }
 
 // --- Allowlist / blocklist --------------------------------------------------
