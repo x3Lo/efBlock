@@ -20,7 +20,7 @@ appareils du réseau (PC, téléphones, invités) sans rien installer sur eux.
 - **Journal des requêtes** (SQLite) : domaine, client, résultat, durée. Purge automatique.
 - **Interface web** (Next.js) : tableau de bord, pause du blocage (5 min / 30 min / 1 h), journal,
   gestion des listes et des domaines. Protégée par mot de passe, réservée au réseau local.
-- **Léger** : un seul binaire (interface comprise), ~25 Mo de RAM avec ~130 000 domaines chargés.
+- **Léger** : un seul binaire (interface comprise) ; environ 27 Mo de RAM avec 78 000 domaines chargés (StevenBlack), un peu plus avec des listes plus grosses.
 - **Service systemd** qui redémarre tout seul, sans droits root.
 
 ## Comment une requête est traitée
