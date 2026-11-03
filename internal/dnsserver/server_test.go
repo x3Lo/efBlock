@@ -2,6 +2,7 @@ package dnsserver
 
 import (
 	"net"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/x3Lo/efBlock/internal/cache"
 	"github.com/x3Lo/efBlock/internal/filter"
+	"github.com/x3Lo/efBlock/internal/querylog"
 	"github.com/x3Lo/efBlock/internal/upstream"
 )
 
@@ -50,6 +52,10 @@ func startFakeUpstream(t *testing.T) (addr string, hits *atomic.Int32) {
 }
 
 func startEfBlock(t *testing.T, upstreamAddr string, eng *filter.Engine, c *cache.Cache) string {
+	return startEfBlockLog(t, upstreamAddr, eng, c, nil)
+}
+
+func startEfBlockLog(t *testing.T, upstreamAddr string, eng *filter.Engine, c *cache.Cache, l *querylog.Logger) string {
 	t.Helper()
 	addr := freeAddr(t)
 	fwd, err := upstream.New([]string{upstreamAddr}, 2*time.Second, nil)
@@ -61,6 +67,7 @@ func startEfBlock(t *testing.T, upstreamAddr string, eng *filter.Engine, c *cach
 		Upstream: fwd,
 		Filter:   eng,
 		Cache:    c,
+		Log:      l,
 	})
 	go srv.Start()
 	t.Cleanup(srv.Shutdown)
@@ -131,5 +138,50 @@ func TestBlockedDomainNeverReachesUpstream(t *testing.T) {
 	}
 	if hits.Load() != 0 {
 		t.Error("un domaine bloqué ne doit jamais atteindre l'upstream")
+	}
+}
+
+// Chaque requête doit apparaître dans le journal avec le bon statut.
+func TestQueriesAreLogged(t *testing.T) {
+	upAddr, _ := startFakeUpstream(t)
+	eng := filter.NewEngine()
+	eng.SetUserRules(nil, []string{"ads.example.com"})
+
+	path := filepath.Join(t.TempDir(), "q.db")
+	ql, err := querylog.Open(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := startEfBlockLog(t, upAddr, eng, cache.New(100, 0), ql)
+
+	ask(t, addr, "ads.example.com.", dns.TypeA) // bloquée
+	ask(t, addr, "Example.COM.", dns.TypeA)     // transmise (nom en casse mixte)
+	ask(t, addr, "example.com.", dns.TypeA)     // cache
+	time.Sleep(50 * time.Millisecond)
+	ql.Close() // écrit ce qui est en attente
+	r, err := querylog.Open(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	got, _ := r.Recent(20)
+	actions := map[string]string{} // domaine+statut
+	for _, e := range got {
+		if e.Name == "ready.test" {
+			continue // requête de démarrage de startEfBlock
+		}
+		if e.Client != "127.0.0.1" {
+			t.Errorf("client = %q, attendu 127.0.0.1", e.Client)
+		}
+		actions[e.Name+"/"+e.Action] = e.Rule
+	}
+	for _, want := range []string{"ads.example.com/blocked", "example.com/forwarded", "example.com/cached"} {
+		if _, ok := actions[want]; !ok {
+			t.Errorf("entrée manquante dans le journal: %s (obtenu %v)", want, actions)
+		}
+	}
+	if actions["ads.example.com/blocked"] != "ads.example.com" {
+		t.Errorf("la règle qui a bloqué doit être enregistrée, obtenu %q", actions["ads.example.com/blocked"])
 	}
 }

@@ -56,3 +56,11 @@ cache:
   max_entries: 10000
   # Plafond de durée de vie, même si l'upstream annonce un TTL plus long.
   max_ttl: 24h
+
+querylog:
+  # Journal des requêtes (domaine, client, bloqué ou non), dans une base SQLite.
+  # Il alimente le tableau de bord. "enabled: false" = aucune requête enregistrée (vie privée).
+  enabled: true
+  # path: "./data/queries.db"
+  # Durée de conservation en jours (-1 = illimité).
+  retention_days: 7

@@ -4,11 +4,13 @@ package dnsserver
 import (
 	"log/slog"
 	"net"
+	"time"
 
 	"github.com/miekg/dns"
 
 	"github.com/x3Lo/efBlock/internal/cache"
 	"github.com/x3Lo/efBlock/internal/filter"
+	"github.com/x3Lo/efBlock/internal/querylog"
 	"github.com/x3Lo/efBlock/internal/upstream"
 )
 
@@ -22,6 +24,7 @@ type Options struct {
 	Upstream *upstream.Forwarder // résolveurs amont
 	Filter   *filter.Engine      // décide quels domaines sont bloqués
 	Cache    *cache.Cache        // nil = pas de cache
+	Log      *querylog.Logger    // nil = pas de journal
 	NXDomain bool                // true : bloque avec NXDOMAIN ; false : avec 0.0.0.0 / ::
 }
 
@@ -68,6 +71,8 @@ func (s *Server) Shutdown() {
 
 // handle traite UNE requête. miekg/dns l'appelle dans une goroutine par requête.
 func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
+	start := time.Now()
+
 	// Une requête valide contient exactement une question (nom + type).
 	if len(req.Question) != 1 {
 		resp := new(dns.Msg)
@@ -78,11 +83,27 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 	q := req.Question[0]
 	qtype := dns.TypeToString[q.Qtype]
 
+	// record ajoute la requête au journal (sans jamais bloquer, voir querylog).
+	record := func(action, rule string, rcode int) {
+		s.opts.Log.Log(querylog.Entry{
+			Time:     start,
+			Client:   clientIP(w),
+			Name:     filter.NormalizeName(q.Name),
+			QType:    qtype,
+			Action:   action,
+			Rule:     rule,
+			Rcode:    dns.RcodeToString[rcode],
+			Duration: time.Since(start),
+		})
+	}
+
 	// 1. Filtrage : avant tout accès au réseau, on regarde si le domaine
 	// est bloqué. Un domaine bloqué ne quitte jamais la maison.
 	if v := s.opts.Filter.Check(q.Name); v.Blocked {
 		slog.Debug("bloqué", "name", q.Name, "type", qtype, "règle", v.Rule, "raison", v.Reason)
-		s.reply(w, req, s.blockedResponse(req, q))
+		resp := s.blockedResponse(req, q)
+		s.reply(w, req, resp)
+		record(querylog.ActionBlocked, v.Rule, resp.Rcode)
 		return
 	}
 
@@ -92,6 +113,7 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 		if resp, ok := s.opts.Cache.Get(req); ok {
 			slog.Debug("cache", "name", q.Name, "type", qtype, "rcode", dns.RcodeToString[resp.Rcode])
 			s.reply(w, req, resp)
+			record(querylog.ActionCached, "", resp.Rcode)
 			return
 		}
 	}
@@ -104,6 +126,7 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 		fail := new(dns.Msg)
 		fail.SetRcode(req, dns.RcodeServerFailure)
 		s.reply(w, req, fail)
+		record(querylog.ActionError, "", dns.RcodeServerFailure)
 		return
 	}
 
@@ -112,6 +135,16 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 		s.opts.Cache.Put(req, resp) // Put copie : on peut ensuite modifier resp (troncature)
 	}
 	s.reply(w, req, resp)
+	record(querylog.ActionForwarded, "", resp.Rcode)
+}
+
+// clientIP extrait l'IP du client (sans le port) de la connexion.
+func clientIP(w dns.ResponseWriter) string {
+	host, _, err := net.SplitHostPort(w.RemoteAddr().String())
+	if err != nil {
+		return w.RemoteAddr().String()
+	}
+	return host
 }
 
 // reply envoie resp au client, en respectant la taille de paquet qu'il accepte.

@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -14,7 +15,18 @@ type Config struct {
 	DNS    DNS    `yaml:"dns"`
 	Filter Filter `yaml:"filter"`
 	Cache  Cache  `yaml:"cache"`
+	Log    Log    `yaml:"querylog"`
 }
+
+// Log regroupe les réglages du journal des requêtes.
+type Log struct {
+	Enabled       *bool  `yaml:"enabled"`        // nil = activé par défaut
+	Path          string `yaml:"path"`           // fichier SQLite
+	RetentionDays int    `yaml:"retention_days"` // 0 = valeur par défaut (7), -1 = illimité
+}
+
+// IsEnabled indique si le journal est actif (oui, sauf "enabled: false").
+func (l Log) IsEnabled() bool { return l.Enabled == nil || *l.Enabled }
 
 // Cache regroupe les réglages du cache DNS.
 type Cache struct {
@@ -102,6 +114,13 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Cache.MaxTTL == 0 {
 		cfg.Cache.MaxTTL = 24 * time.Hour
+	}
+
+	if cfg.Log.Path == "" {
+		cfg.Log.Path = filepath.Join(cfg.Filter.DataDir, "queries.db")
+	}
+	if cfg.Log.RetentionDays == 0 {
+		cfg.Log.RetentionDays = 7
 	}
 
 	if len(cfg.DNS.Bootstrap) == 0 {

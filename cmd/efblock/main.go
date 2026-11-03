@@ -7,12 +7,15 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/x3Lo/efBlock/internal/cache"
 	"github.com/x3Lo/efBlock/internal/config"
 	"github.com/x3Lo/efBlock/internal/dnsserver"
 	"github.com/x3Lo/efBlock/internal/filter"
+	"github.com/x3Lo/efBlock/internal/querylog"
 	"github.com/x3Lo/efBlock/internal/upstream"
 )
 
@@ -55,7 +58,27 @@ func main() {
 		dnsCache = cache.New(cfg.Cache.MaxEntries, cfg.Cache.MaxTTL)
 	}
 
+	// Journal des requêtes (SQLite). Close() à l'arrêt écrit les dernières lignes.
+	var qlog *querylog.Logger
+	if cfg.Log.IsEnabled() {
+		if err := os.MkdirAll(filepath.Dir(cfg.Log.Path), 0o755); err != nil {
+			slog.Error("dossier du journal", "err", err)
+			os.Exit(1)
+		}
+		retention := time.Duration(cfg.Log.RetentionDays) * 24 * time.Hour
+		if cfg.Log.RetentionDays < 0 {
+			retention = 0
+		}
+		qlog, err = querylog.Open(cfg.Log.Path, retention)
+		if err != nil {
+			slog.Error("journal des requêtes", "err", err)
+			os.Exit(1)
+		}
+		defer qlog.Close()
+	}
+
 	srv := dnsserver.New(dnsserver.Options{
+		Log:      qlog,
 		Addr:     cfg.DNS.Listen,
 		Upstream: fwd,
 		Filter:   engine,
