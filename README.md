@@ -17,11 +17,16 @@ appareils du réseau (PC, téléphones, invités) sans rien installer sur eux.
 - **Mise à jour automatique** des listes (24 h par défaut) ; les listes en cache sur disque permettent
   de démarrer même sans internet.
 - **Upstreams chiffrés** : DNS-over-TLS (`tls://1.1.1.1`) et DNS-over-HTTPS (`https://…/dns-query`),
-  avec basculement de l'un à l'autre.
+  avec basculement de l'un à l'autre. Un upstream en panne est mis de côté un moment (5 s, puis 10 s, 20 s…
+  jusqu'à 1 minute) au lieu de faire attendre chaque requête.
+- **Réseau local** : noms fixes (format `/etc/hosts`), domaines confiés à ta box, et zones inverses privées
+  jamais envoyées sur internet. Le journal affiche le nom des machines.
+- **Contrôle d'accès** : seuls les réseaux autorisés (par défaut, les réseaux privés) peuvent utiliser le DNS.
 - **Cache** qui respecte les TTL, avec cache négatif (RFC 2308) et éviction LRU.
 - **Journal des requêtes** (SQLite) : domaine, client, résultat, durée. Purge automatique.
 - **Interface web** (Next.js, shadcn/ui) : tableau de bord avec graphique, pause du blocage (5 min / 30 min / 1 h),
-  **journal des requêtes en direct**, gestion des listes et des domaines. Protégée par mot de passe,
+  **journal des requêtes en direct**, gestion des listes et des domaines, et **page Réglages** pour
+  presque toute la configuration, appliquée à chaud sans redémarrer. Protégée par mot de passe,
   réservée au réseau local.
 - **Léger** : un seul binaire (interface comprise) ; environ 27 Mo de RAM avec 78 000 domaines chargés (StevenBlack), un peu plus avec des listes plus grosses.
 - **Service systemd** qui redémarre tout seul, sans droits root.
@@ -171,7 +176,17 @@ web:
 
 ## Configuration
 
-Tout est dans un fichier YAML ; voir [`deploy/config.example.yaml`](deploy/config.example.yaml), commenté.
+La base est un fichier YAML ; voir [`deploy/config.example.yaml`](deploy/config.example.yaml), commenté.
+
+Presque tout peut aussi se régler depuis la page **Réglages** de l'interface, **sans redémarrer** :
+résolveurs amont (avec un bouton « Tester »), réseau local, mode de blocage, cache, journal, accès
+et mot de passe. Les valeurs enregistrées dans l'interface vont dans `data/settings.json` et remplacent
+celles de `config.yaml` pour le groupe modifié ; « Rétablir config.yaml » revient en arrière. Une valeur
+invalide est refusée avant d'être appliquée, et l'interface refuse un réseau qui t'exclurait toi-même.
+
+Restent dans `config.yaml` : les adresses d'écoute (`dns.listen`, `web.listen`), HTTPS, le dossier de données
+et le hash initial du mot de passe. Une faute de frappe sur une adresse d'écoute te couperait l'accès à
+l'interface ; il vaut mieux pouvoir la réparer depuis un terminal.
 
 | Section | Option | Défaut | Rôle |
 |---|---|---|---|
@@ -179,6 +194,9 @@ Tout est dans un fichier YAML ; voir [`deploy/config.example.yaml`](deploy/confi
 | | `upstreams` | *(obligatoire)* | `tls://IP`, `https://hôte/chemin` ou `IP[:port]` ; essayés dans l'ordre |
 | | `bootstrap` | `1.1.1.1:53`, `9.9.9.9:53` | DNS classiques, seulement pour trouver l'IP d'un upstream donné par son nom |
 | | `timeout` | `3s` | délai max par upstream |
+| | `allowed_clients` | réseaux privés | qui peut utiliser le DNS ; les autres reçoivent `REFUSED` |
+| | `local.upstream` / `local.domains` | *(aucun)* | résolveur du LAN (ta box) et suffixes qui lui sont confiés |
+| | `local.hosts` | *(aucun)* | noms fixes, format `/etc/hosts` : `192.168.1.20 nas.maison nas` |
 | `filter` | `lists` | *(aucune)* | listes de filtres (URL ou fichier local) |
 | | `allowlist` / `blocklist` | vides | domaines fixes (sous-domaines inclus) |
 | | `block_mode` | `zero_ip` | `zero_ip` (0.0.0.0 / ::) ou `nxdomain` |
@@ -229,6 +247,17 @@ port **53** (et non 5353) ; Windows teste sa connexion via le DNS.
 **Les logs** : `journalctl -u efblock -n 50 --no-pager`. Pour le détail de chaque requête, lance
 `/usr/local/bin/efblock -debug -config /etc/efblock/config.yaml` à la main (service arrêté).
 
+## Sécurité
+
+- **Le DNS n'est servi qu'aux réseaux de `dns.allowed_clients`** (par défaut les réseaux privés). Un serveur DNS
+  ouvert à tous peut être détourné pour attaquer des tiers. N'expose jamais le port 53 sur internet.
+- **Listes de filtres vérifiées** : une liste qui ne contient aucun domaine reconnaissable (page d'erreur
+  servie avec le code 200) ou qui perd plus de 70 % de ses domaines d'un coup est rejetée, l'ancienne copie reste en place.
+- **Le service tourne sans droits** : utilisateur dédié, système de fichiers en lecture seule,
+  seule capacité accordée : ouvrir le port 53.
+- Journal des requêtes : il contient les domaines visités par chaque appareil. Réduis `retention_days`
+  ou désactive-le (`querylog.enabled: false`) si cela te gêne.
+
 ## Limites
 
 - Le blocage DNS arrête les pubs servies par des domaines **tiers**. Il ne peut pas bloquer celles qui
@@ -237,6 +266,8 @@ port **53** (et non 5353) ; Windows teste sa connexion via le DNS.
   contourne efBlock.
 - Pas de validation DNSSEC (le bit DO est transmis à l'upstream, la validation est laissée au client).
 - Pas de règles par client.
+- Le blocage ne regarde que le nom demandé : un traqueur déguisé derrière un CNAME de premier niveau
+  (« CNAME cloaking ») n'est pas détecté.
 
 ## Développement
 
@@ -252,7 +283,9 @@ internal/config/      chargement et validation du YAML
 internal/dnsserver/   serveur UDP/TCP : filtre → cache → upstream, journal
 internal/filter/      parsing des listes (hosts, adblock), matching des domaines, mise à jour
 internal/cache/       cache TTL + LRU + cache négatif
-internal/upstream/    clients DNS classique, DoT, DoH
+internal/upstream/    clients DNS classique, DoT, DoH, état de santé des upstreams
+internal/localdns/    noms fixes, domaines locaux, zones inverses privées, noms des clients
+internal/settings/    réglages modifiables depuis l'interface (settings.json), appliqués à chaud
 internal/querylog/    journal SQLite et statistiques
 internal/store/       réglages modifiables depuis l'interface (state.json)
 internal/web/         API JSON sécurisée + interface embarquée (dist/)

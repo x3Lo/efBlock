@@ -134,7 +134,9 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if bcrypt.CompareHashAndPassword([]byte(*s.hash.Load()), []byte(body.Current)) != nil {
 		s.limiter.failure(ip)
-		writeError(w, http.StatusUnauthorized, "mot de passe actuel incorrect")
+		// 403 et non 401 : la session est valide, c'est la confirmation qui est fausse.
+		// Un 401 ferait croire à l'interface que la session a expiré et la déconnecterait.
+		writeError(w, http.StatusForbidden, "mot de passe actuel incorrect")
 		return
 	}
 	s.limiter.success(ip)

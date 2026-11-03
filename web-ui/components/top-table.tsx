@@ -1,5 +1,5 @@
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
-import { Count, nf } from "@/lib/api";
+import { nf, Rank } from "@/lib/api";
 
 // Classement : un nom, un nombre, et éventuellement une action par ligne.
 export default function TopTable({
@@ -9,7 +9,7 @@ export default function TopTable({
   action,
 }: {
   title: string;
-  rows: Count[];
+  rows: Rank[];
   empty?: string;
   action?: (name: string) => React.ReactNode;
 }) {
@@ -22,10 +22,19 @@ export default function TopTable({
         <Table>
           <TableBody>
             {rows.map((r) => (
-              <TableRow key={r.Name}>
-                <TableCell className="font-mono text-xs break-all">{r.Name}</TableCell>
-                <TableCell className="w-16 text-right font-mono text-xs tabular-nums">{nf.format(r.Count)}</TableCell>
-                {action && <TableCell className="w-24 text-right">{action(r.Name)}</TableCell>}
+              <TableRow key={r.name}>
+                <TableCell className="font-mono text-xs break-all">
+                  {r.label ? (
+                    <>
+                      <span className="font-sans text-sm">{r.label}</span>
+                      <span className="ml-2 text-muted-foreground">{r.name}</span>
+                    </>
+                  ) : (
+                    r.name
+                  )}
+                </TableCell>
+                <TableCell className="w-16 text-right font-mono text-xs tabular-nums">{nf.format(r.count)}</TableCell>
+                {action && <TableCell className="w-24 text-right">{action(r.name)}</TableCell>}
               </TableRow>
             ))}
           </TableBody>

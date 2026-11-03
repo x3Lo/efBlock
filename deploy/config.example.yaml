@@ -24,6 +24,21 @@ dns:
   # Délai max d'attente d'une réponse amont.
   timeout: 3s
 
+  # Qui a le droit d'utiliser ce DNS. Sans cette ligne : seulement les réseaux privés
+  # (10.x, 172.16-31.x, 192.168.x, boucle locale). Ne mets jamais 0.0.0.0/0 : ton serveur
+  # deviendrait un "résolveur ouvert", détournable pour attaquer des tiers.
+  # allowed_clients: ["192.168.1.0/24"]
+
+  # Noms du réseau local. Sans ça, "nas.maison" ou la recherche inverse d'une IP privée
+  # partent sur internet (échec, et fuite d'informations sur ton réseau). Les zones
+  # inverses privées sont de toute façon traitées localement, même sans cette section.
+  # local:
+  #   upstream: "192.168.1.1"        # le résolveur qui connaît les noms du LAN (ta box)
+  #   domains: ["lan", "maison"]     # suffixes envoyés à ce résolveur, jamais à internet
+  #   hosts:                         # noms fixes, format /etc/hosts
+  #     - "192.168.1.20 nas.maison nas"
+  #     - "192.168.1.1 box.maison"
+
 filter:
   # Dossier où sont gardées les listes téléchargées (le serveur démarre ainsi
   # avec les listes du dernier téléchargement, même sans internet).
@@ -78,3 +93,8 @@ web:
   # HTTPS (recommandé si d'autres personnes sont sur le réseau) :
   # tls_cert: "./data/cert.pem"
   # tls_key: "./data/key.pem"
+
+# Presque tout peut aussi se régler depuis l'interface web (page "Réglages"), sans
+# redémarrer. Ces réglages sont enregistrés dans data/settings.json et remplacent
+# ceux de ce fichier pour le groupe modifié. Restent ici : les adresses d'écoute
+# (dns.listen, web.listen), HTTPS, le dossier de données et le hash initial du mot de passe.

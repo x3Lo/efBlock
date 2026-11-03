@@ -35,6 +35,7 @@ const links = [
   { href: "/", label: "Tableau de bord" },
   { href: "/queries/", label: "Journal" },
   { href: "/filters/", label: "Filtres" },
+  { href: "/settings/", label: "Réglages" },
 ];
 
 function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: () => void }) {

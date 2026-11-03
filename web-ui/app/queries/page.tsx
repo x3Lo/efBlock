@@ -13,10 +13,11 @@ type Row = QueryEntry & { uid: number };
 
 const MAX_ROWS = 300;
 
-const RESULT: Record<QueryEntry["action"], { label: string; variant: "default" | "blocked" | "destructive" }> = {
+const RESULT: Record<QueryEntry["action"], { label: string; variant: "default" | "blocked" | "destructive" | "ok" }> = {
   blocked: { label: "bloquée", variant: "blocked" },
   cached: { label: "cache", variant: "default" },
   forwarded: { label: "transmise", variant: "default" },
+  local: { label: "local", variant: "ok" },
   error: { label: "échec", variant: "destructive" },
 };
 
@@ -74,7 +75,7 @@ export default function Queries() {
     es.onmessage = (ev) => {
       const e = JSON.parse(ev.data) as QueryEntry;
       const f = filterRef.current;
-      if (f && !e.name.toLowerCase().includes(f) && !e.client.toLowerCase().includes(f)) return;
+      if (f && !e.name.toLowerCase().includes(f) && !e.client.toLowerCase().includes(f) && !(e.clientName ?? "").toLowerCase().includes(f)) return;
       pending.current.push({ ...e, uid: uid.current++ });
     };
     // Sur un réseau chargé, on regroupe les arrivées : un affichage toutes les 250 ms.
@@ -170,7 +171,16 @@ export default function Queries() {
             {rows.map((e) => (
               <TableRow key={e.uid}>
                 <TableCell className="font-mono text-xs whitespace-nowrap text-muted-foreground">{fmtTime(e.time)}</TableCell>
-                <TableCell className="font-mono text-xs whitespace-nowrap">{e.client}</TableCell>
+                <TableCell className="font-mono text-xs whitespace-nowrap">
+                  {e.clientName ? (
+                    <>
+                      <span className="font-sans text-sm">{e.clientName}</span>
+                      <div className="text-muted-foreground">{e.client}</div>
+                    </>
+                  ) : (
+                    e.client
+                  )}
+                </TableCell>
                 <TableCell className="font-mono text-xs break-all">
                   {e.name}
                   {e.rule && e.rule !== e.name && <div className="text-muted-foreground">règle : {e.rule}</div>}

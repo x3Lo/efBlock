@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import ActivityChart from "@/components/activity-chart";
 import BlockingControl from "@/components/blocking-control";
 import TopTable from "@/components/top-table";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, Blocking, nf, Stats } from "@/lib/api";
@@ -26,12 +27,24 @@ export default function Dashboard() {
     }
   }, [hours]);
 
-  // Chargement au démarrage, au changement de période, puis toutes les 10 s.
+  // Chargement au démarrage, au changement de période, puis à intervalle régulier :
+  // plus espacé sur les longues périodes (le calcul est plus coûteux), et suspendu
+  // quand l'onglet n'est pas visible.
   useEffect(() => {
     load();
-    const id = setInterval(load, 10_000);
-    return () => clearInterval(id);
-  }, [load]);
+    const every = { "1": 5_000, "24": 10_000, "168": 30_000 }[hours] ?? 10_000;
+    const id = setInterval(() => {
+      if (!document.hidden) load();
+    }, every);
+    const onVisible = () => {
+      if (!document.hidden) load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load, hours]);
 
   async function allow(domain: string) {
     try {
@@ -67,6 +80,7 @@ export default function Dashboard() {
       )}
 
       <BlockingControl blocking={stats.blocking} onChange={(b: Blocking) => setStats({ ...stats, blocking: b })} />
+      <UpstreamStrip upstreams={stats.upstreams} />
 
       {!stats.logEnabled ? (
         <p className="text-muted-foreground">
@@ -75,7 +89,7 @@ export default function Dashboard() {
       ) : (
         <>
           <dl className="grid grid-cols-2 divide-x divide-y border md:grid-cols-4 md:divide-y-0">
-            <Figure label="Requêtes" value={nf.format(s.total)} sub={`${nf.format(s.forwarded)} transmises à l'upstream`} />
+            <Figure label="Requêtes" value={nf.format(s.total)} sub={`${nf.format(s.forwarded)} transmises, ${nf.format(s.local)} locales`} />
             <Figure
               label="Bloquées"
               value={nf.format(s.blocked)}
@@ -85,11 +99,11 @@ export default function Dashboard() {
             <Figure
               label="Cache"
               value={nf.format(s.cached)}
-              sub={`${pct(cachePct)} du total, ${nf.format(stats.cache?.Entries ?? 0)} entrées`}
+              sub={`${pct(cachePct)} du total, ${nf.format(stats.cache?.entries ?? 0)} entrées`}
             />
             <Figure
               label="Domaines dans les listes"
-              value={nf.format(stats.filter.Blocked)}
+              value={nf.format(stats.filter.blocked)}
               sub={s.errors > 0 ? `${nf.format(s.errors)} échec(s) upstream` : "aucun échec upstream"}
             />
           </dl>
@@ -120,6 +134,27 @@ export default function Dashboard() {
         </>
       )}
     </div>
+  );
+}
+
+// État des résolveurs amont : un upstream en panne est mis de côté un moment, on l'affiche.
+function UpstreamStrip({ upstreams }: { upstreams: Stats["upstreams"] }) {
+  if (upstreams.length === 0) return null;
+  const time = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "");
+  return (
+    <section aria-label="Résolveurs amont" className="-mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+      <span className="text-muted-foreground">Upstreams</span>
+      {upstreams.map((u) => (
+        <span key={u.name} className="flex items-center gap-1.5">
+          <span className="font-mono">{u.name}</span>
+          {u.healthy ? (
+            <Badge variant="ok">ok</Badge>
+          ) : (
+            <Badge variant="warn">en panne, nouvel essai à {time(u.downUntil)}</Badge>
+          )}
+        </span>
+      ))}
+    </section>
   );
 }
 

@@ -108,8 +108,11 @@ func TestPasswordChange(t *testing.T) {
 	other := e.login(t) // une 2e session (un autre navigateur)
 
 	// Mauvais mot de passe actuel.
-	if rec := e.do("POST", "/api/password", me, c, map[string]string{"current": "faux", "new": "nouveau-mot-de-passe"}, true); rec.Code != 401 {
-		t.Errorf("mauvais mot de passe actuel: %d", rec.Code)
+	if rec := e.do("POST", "/api/password", me, c, map[string]string{"current": "faux", "new": "nouveau-mot-de-passe"}, true); rec.Code != http.StatusForbidden {
+		t.Errorf("mauvais mot de passe actuel: %d, attendu 403 (pas 401 : la session reste valide)", rec.Code)
+	}
+	if rec := e.do("GET", "/api/session", me, c, nil, false); rec.Code != 200 {
+		t.Error("un mauvais mot de passe actuel ne doit pas fermer la session")
 	}
 	// Trop court / trop long.
 	if rec := e.do("POST", "/api/password", me, c, map[string]string{"current": testPassword, "new": "court"}, true); rec.Code != 400 {

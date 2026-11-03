@@ -43,9 +43,10 @@ export async function api<T>(
 
 // --- Types des réponses ---
 
-export type Count = { Name: string; Count: number };
+export type Rank = { name: string; count: number; label?: string };
 export type Bucket = { start: string; total: number; blocked: number };
 export type Blocking = { mode: "on" | "off" | "paused"; pausedUntil?: string };
+export type UpstreamStatus = { name: string; healthy: boolean; failures: number; downUntil?: string };
 
 export type Stats = {
   logEnabled: boolean;
@@ -55,24 +56,27 @@ export type Stats = {
     blocked: number;
     cached: number;
     forwarded: number;
+    local: number;
     errors: number;
     blockedPct: number;
   };
-  topBlocked: Count[];
-  topDomains: Count[];
-  topClients: Count[];
+  topBlocked: Rank[];
+  topDomains: Rank[];
+  topClients: Rank[];
   timeline: Bucket[];
   blocking: Blocking;
-  filter: { Blocked: number; Exceptions: number };
-  cache: { Hits: number; Misses: number; Entries: number } | null;
+  upstreams: UpstreamStatus[];
+  filter: { blocked: number; exceptions: number };
+  cache: { hits: number; misses: number; entries: number } | null;
 };
 
 export type QueryEntry = {
   time: string;
   client: string;
+  clientName?: string;
   name: string;
   qtype: string;
-  action: "blocked" | "cached" | "forwarded" | "error";
+  action: "blocked" | "cached" | "forwarded" | "local" | "error";
   rule: string;
   rcode: string;
   durationUs: number;
@@ -94,6 +98,28 @@ export type ListsResponse = {
   totalBlocked: number;
   totalExceptions: number;
 };
+
+// --- Réglages ---
+
+export type Groups = {
+  upstream: { upstreams: string[]; bootstrap: string[]; timeout: string };
+  access: { dns_clients: string[]; web_cidrs: string[] };
+  local: { upstream: string; domains: string[]; hosts: string[] };
+  filter: { block_mode: string; update_interval: string };
+  cache: { enabled: boolean; max_entries: number; max_ttl: string };
+  querylog: { retention_days: number };
+};
+export type GroupName = keyof Groups;
+
+export type SettingsView = {
+  effective: Groups;
+  base: Groups;
+  overridden: GroupName[];
+  infra: { dns_listen: string; web_listen: string; https: boolean; data_dir: string; querylog_enabled: boolean };
+  canRestart: boolean;
+};
+
+export type UpstreamTestResult = { name: string; ok: boolean; latencyMs: number; error?: string };
 
 export const nf = new Intl.NumberFormat("fr-FR");
 export const fmtTime = (iso: string) =>
