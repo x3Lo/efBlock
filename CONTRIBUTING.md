@@ -22,6 +22,13 @@
 4. Une fois fusionnée dans `dev`, tester le résultat. C'est la préproduction.
 5. Pour publier : une *pull request* de **`dev` vers `main`**, puis un tag sur `main`.
 
+## Comment fusionner (important)
+
+| Fusion | Méthode GitHub | Pourquoi |
+|---|---|---|
+| branche de travail vers `dev` | **Squash and merge** | un commit propre par tâche |
+| `dev` vers `main` | **Create a merge commit** (jamais « squash ») | `dev` et `main` gardent le même historique ; avec un squash, ils divergent et les promotions suivantes affichent des conflits parasites |
+
 ## Publier une version
 
 Seulement depuis `main`, une fois la fusion faite :

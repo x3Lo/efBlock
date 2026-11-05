@@ -320,6 +320,14 @@ func setWebPassword(cfgPath string) int {
 		fmt.Fprintln(os.Stderr, "erreur :", err)
 		return 1
 	}
+	// "./data" est relatif au dossier de travail du SERVICE (/var/lib/efblock), pas à celui
+	// d'où cette commande est lancée (souvent /root) : sinon le mot de passe serait écrit
+	// à un endroit que le service ne lit jamais.
+	if !filepath.IsAbs(base.Filter.DataDir) {
+		if st, err := os.Stat("/var/lib/efblock"); err == nil && st.IsDir() {
+			base.Filter.DataDir = filepath.Join("/var/lib/efblock", base.Filter.DataDir)
+		}
+	}
 	path := filepath.Join(base.Filter.DataDir, "settings.json")
 	if err := os.MkdirAll(base.Filter.DataDir, 0o750); err != nil {
 		fmt.Fprintln(os.Stderr, "erreur :", err)
