@@ -167,9 +167,9 @@ func releaseServer(t *testing.T, payload []byte, sumOf []byte) *httptest.Server 
 	mux := http.NewServeMux()
 	var srv *httptest.Server
 	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"tag_name":"v1.5.0","assets":[
+		fmt.Fprintf(w, `[{"tag_name":"v1.5.0","prerelease":false,"draft":false,"assets":[
 			{"name":"efblock_1.5.0_amd64.deb","browser_download_url":"%s/deb"},
-			{"name":"SHA256SUMS","browser_download_url":"%s/sums"}]}`, srv.URL, srv.URL)
+			{"name":"SHA256SUMS","browser_download_url":"%s/sums"}]}]`, srv.URL, srv.URL)
 	})
 	mux.HandleFunc("/deb", func(w http.ResponseWriter, r *http.Request) { w.Write(payload) })
 	mux.HandleFunc("/sums", func(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +185,7 @@ func TestUpdateDownloadIsVerified(t *testing.T) {
 	srv := releaseServer(t, payload, payload)
 	ctx := context.Background()
 
-	rel, err := latestRelease(ctx, srv.Client(), srv.URL+"/api")
+	rel, err := latestRelease(ctx, srv.Client(), srv.URL+"/api", false)
 	if err != nil || rel.TagName != "v1.5.0" {
 		t.Fatalf("latestRelease: %+v %v", rel, err)
 	}
@@ -206,7 +206,7 @@ func TestUpdateDownloadIsVerified(t *testing.T) {
 // Un fichier dont l'empreinte ne correspond pas doit être rejeté ET supprimé.
 func TestUpdateRejectsTamperedFile(t *testing.T) {
 	srv := releaseServer(t, []byte("fichier modifié par quelqu'un"), []byte("le vrai fichier"))
-	rel, _ := latestRelease(context.Background(), srv.Client(), srv.URL+"/api")
+	rel, _ := latestRelease(context.Background(), srv.Client(), srv.URL+"/api", false)
 	name, debURL, sumsURL, _ := assetURLs(rel, "amd64")
 	dir := t.TempDir()
 
@@ -220,15 +220,73 @@ func TestUpdateRejectsTamperedFile(t *testing.T) {
 }
 
 func TestLatestReleaseErrors(t *testing.T) {
-	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "x", 403) }))
-	defer bad.Close()
-	if _, err := latestRelease(context.Background(), bad.Client(), bad.URL); err == nil || !strings.Contains(err.Error(), "403") {
-		t.Errorf("HTTP 403: %v", err)
+	serve := func(code int, body string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+			w.Write([]byte(body))
+		}))
 	}
-	junk := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"autre":1}`)) }))
-	defer junk.Close()
-	if _, err := latestRelease(context.Background(), junk.Client(), junk.URL); err == nil {
-		t.Error("une réponse sans tag_name doit être refusée")
+	cases := []struct {
+		name string
+		code int
+		body string
+		want string
+	}{
+		{"HTTP 403", 403, "x", "403"},
+		{"réponse qui n'est pas une liste", 200, `{"autre":1}`, "inattendue"},
+		{"liste vide", 200, `[]`, "aucune version"},
+	}
+	for _, tc := range cases {
+		srv := serve(tc.code, tc.body)
+		_, err := latestRelease(context.Background(), srv.Client(), srv.URL, true)
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s : erreur = %v, attendu un message contenant %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// GitHub renvoie les versions de la plus récente à la plus ancienne : on prend la première utilisable.
+func TestLatestReleaseSelection(t *testing.T) {
+	list := `[
+		{"tag_name":"v2.0.0","draft":true,"prerelease":false},
+		{"tag_name":"v1.9.0","draft":false,"prerelease":true},
+		{"tag_name":"v1.8.0","draft":false,"prerelease":false},
+		{"tag_name":"v1.7.0","draft":false,"prerelease":false}]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(list)) }))
+	defer srv.Close()
+	ctx := context.Background()
+
+	r, err := latestRelease(ctx, srv.Client(), srv.URL, true)
+	if err != nil || r.TagName != "v1.9.0" {
+		t.Errorf("pré-versions acceptées : %q %v, attendu v1.9.0 (jamais le brouillon v2.0.0)", r.TagName, err)
+	}
+	r, err = latestRelease(ctx, srv.Client(), srv.URL, false)
+	if err != nil || r.TagName != "v1.8.0" {
+		t.Errorf("version stable seulement : %q %v, attendu v1.8.0", r.TagName, err)
+	}
+
+	// Le cas réel d'aujourd'hui : il n'existe que des pré-versions (0.x).
+	only := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"tag_name":"v0.1.0","draft":false,"prerelease":true}]`))
+	}))
+	defer only.Close()
+	if r, err := latestRelease(ctx, only.Client(), only.URL, true); err != nil || r.TagName != "v0.1.0" {
+		t.Errorf("une installation en 0.x doit voir la pré-version v0.1.0 : %q %v", r.TagName, err)
+	}
+	if _, err := latestRelease(ctx, only.Client(), only.URL, false); err == nil {
+		t.Error("une installation stable ne doit pas recevoir une pré-version")
+	}
+}
+
+func TestAcceptsPrereleases(t *testing.T) {
+	for v, want := range map[string]bool{
+		"dev": true, "0.1.0": true, "v0.9.3": true, "garbage": true, // avant la 1.0, ou version inconnue
+		"1.0.0": false, "2.3.1": false, "v1.2.3": false, // versions stables
+	} {
+		if got := acceptsPrereleases(v); got != want {
+			t.Errorf("acceptsPrereleases(%q) = %v, attendu %v", v, got, want)
+		}
 	}
 }
 
