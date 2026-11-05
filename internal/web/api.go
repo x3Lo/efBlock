@@ -157,6 +157,7 @@ type statsResponse struct {
 		Hits    uint64 `json:"hits"`
 		Misses  uint64 `json:"misses"`
 		Entries int    `json:"entries"`
+		Stale   uint64 `json:"stale"` // réponses périmées servies en secours
 	} `json:"cache"`
 }
 
@@ -260,7 +261,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 				Hits    uint64 `json:"hits"`
 				Misses  uint64 `json:"misses"`
 				Entries int    `json:"entries"`
-			}{h, m, n}
+				Stale   uint64 `json:"stale"`
+			}{h, m, n, c.StaleServed()}
 		}
 	}
 	if s.d.Upstream != nil {
@@ -552,4 +554,58 @@ func (s *Server) handleUpdateLists(w http.ResponseWriter, r *http.Request) {
 	s.d.Updater.Trigger()
 	slog.Info("mise à jour des listes demandée depuis l'interface")
 	writeJSON(w, http.StatusAccepted, map[string]bool{"started": true})
+}
+
+// --- Groupes de clients -------------------------------------------------------
+
+type knownClient struct {
+	IP    string `json:"ip"`
+	Label string `json:"label,omitempty"`
+	Count int64  `json:"count"`
+}
+
+type groupsResponse struct {
+	Groups []store.Group `json:"groups"`
+	Lists  []struct {
+		Name string `json:"name"`
+		URL  string `json:"url"`
+	} `json:"lists"`
+	Clients []knownClient `json:"clients"` // clients vus récemment, pour les ajouter d'un clic
+}
+
+func (s *Server) groupsResponse() groupsResponse {
+	r := groupsResponse{Groups: s.d.Store.Groups(), Clients: []knownClient{}}
+	for _, l := range s.d.Store.Lists() {
+		r.Lists = append(r.Lists, struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		}{l.Name, l.URL})
+	}
+	if s.d.Log != nil {
+		if top, err := s.d.Log.TopClients(time.Now().Add(-7*24*time.Hour), 50); err == nil {
+			for _, c := range top {
+				r.Clients = append(r.Clients, knownClient{IP: c.Name, Label: s.clientName(c.Name), Count: c.Count})
+			}
+		}
+	}
+	return r
+}
+
+func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.groupsResponse())
+}
+
+func (s *Server) handleGroupsUpdate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Groups []store.Group `json:"groups"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if err := s.d.Store.SetGroups(body.Groups); err != nil {
+		storeError(w, err)
+		return
+	}
+	slog.Info("groupes de clients modifiés depuis l'interface", "groupes", len(body.Groups))
+	writeJSON(w, http.StatusOK, s.groupsResponse())
 }

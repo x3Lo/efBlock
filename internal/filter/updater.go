@@ -244,9 +244,10 @@ func (u *Updater) Rebuild() error {
 }
 
 func (u *Updater) rebuild() error {
-	idx := &listIndex{block: Set{}, allow: Set{}}
+	idx := &listIndex{}
 	var errs []error
 	var statuses []ListStatus
+	total := 0
 
 	for _, s := range u.currentSources() {
 		st := ListStatus{Name: s.Name, URL: s.URL}
@@ -270,12 +271,13 @@ func (u *Updater) rebuild() error {
 		if fi, err := f.Stat(); err == nil {
 			st.UpdatedAt = fi.ModTime()
 		}
+		ls := listSets{id: s.URL, block: Set{}, allow: Set{}}
 		err = ParseReader(f, func(domain string, allow bool) {
 			if allow {
-				idx.allow.Add(domain)
+				ls.allow.Add(domain)
 				st.Exceptions++
 			} else {
-				idx.block.Add(domain)
+				ls.block.Add(domain)
 				st.Blocked++
 			}
 		})
@@ -284,6 +286,8 @@ func (u *Updater) rebuild() error {
 			errs = append(errs, fmt.Errorf("%s: %w", s.Name, err))
 			st.Error = err.Error()
 		} else {
+			idx.lists = append(idx.lists, ls)
+			total += len(ls.block)
 			slog.Info("liste chargée", "liste", s.Name, "bloqués", st.Blocked, "exceptions", st.Exceptions)
 		}
 		statuses = append(statuses, st)
@@ -291,6 +295,6 @@ func (u *Updater) rebuild() error {
 
 	u.engine.setLists(idx)
 	u.status.Store(&statuses)
-	slog.Info("index des listes publié", "domaines_bloqués", len(idx.block), "exceptions", len(idx.allow))
+	slog.Info("index des listes publié", "domaines_bloqués", total)
 	return errors.Join(errs...)
 }

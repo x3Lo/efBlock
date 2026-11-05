@@ -11,7 +11,9 @@ import (
 
 	"github.com/miekg/dns"
 
+	"github.com/x3Lo/efBlock/internal/querylog"
 	"github.com/x3Lo/efBlock/internal/settings"
+	"github.com/x3Lo/efBlock/internal/store"
 )
 
 const me = "192.168.1.5:1234"
@@ -215,5 +217,61 @@ func TestUpstreamsTest(t *testing.T) {
 	}
 	if rec := e.do("POST", "/api/upstreams/test", me, c, map[string]any{"upstreams": []string{}}, true); rec.Code != 400 {
 		t.Errorf("liste vide: %d", rec.Code)
+	}
+}
+
+func TestGroupsAPI(t *testing.T) {
+	e := newEnv(t)
+	c := e.login(t)
+	if rec := e.do("GET", "/api/groups", me, nil, nil, false); rec.Code != 401 {
+		t.Errorf("sans session: %d", rec.Code)
+	}
+
+	// Un client vu dans le journal est proposé.
+	e.log.Log(querylog.Entry{Time: time.Now(), Client: "192.168.1.77", Name: "x.example.com", QType: "A", Action: querylog.ActionForwarded, Rcode: "NOERROR"})
+	time.Sleep(1300 * time.Millisecond)
+
+	var got struct {
+		Groups  []store.Group `json:"groups"`
+		Clients []struct {
+			IP string `json:"ip"`
+		} `json:"clients"`
+	}
+	rec := e.do("GET", "/api/groups", me, c, nil, false)
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != 200 {
+		t.Fatalf("GET: %d %v", rec.Code, err)
+	}
+	if len(got.Groups) != 0 || len(got.Clients) != 1 || got.Clients[0].IP != "192.168.1.77" {
+		t.Errorf("état initial: %+v", got)
+	}
+
+	body := map[string]any{"groups": []map[string]any{{
+		"name": "Invités", "clients": []string{"192.168.1.77"}, "mode": "off",
+		"all_lists": true, "lists": []string{}, "allow": []string{}, "block": []string{},
+	}}}
+	// Sans l'en-tête anti-CSRF : refusé.
+	if rec := e.do("PUT", "/api/groups", me, c, body, false); rec.Code != 403 {
+		t.Errorf("sans en-tête CSRF: %d", rec.Code)
+	}
+	rec = e.do("PUT", "/api/groups", me, c, body, true)
+	if rec.Code != 200 {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
+	}
+	e.engine.SetUserRules(nil, []string{"pub.example.com"})
+	if v := e.engine.CheckClient(net.ParseIP("192.168.1.77"), "pub.example.com"); v.Blocked || v.Group != "Invités" {
+		t.Errorf("le groupe doit être appliqué tout de suite: %+v", v)
+	}
+
+	// Entrée invalide : refus clair, état précédent conservé.
+	bad := map[string]any{"groups": []map[string]any{{"name": "X", "clients": []string{"pas-une-ip"}, "mode": "off", "all_lists": true}}}
+	rec = e.do("PUT", "/api/groups", me, c, bad, true)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "pas-une-ip") {
+		t.Errorf("client invalide: %d %s", rec.Code, rec.Body)
+	}
+	if v := e.engine.CheckClient(net.ParseIP("192.168.1.77"), "pub.example.com"); v.Group != "Invités" {
+		t.Error("après un refus, les groupes précédents doivent rester")
+	}
+	if rec := e.do("PUT", "/api/groups", me, c, map[string]any{"groupes": []int{}}, true); rec.Code != 400 {
+		t.Errorf("champ inconnu: %d", rec.Code)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -39,8 +40,12 @@ const (
 
 // Limites : un garde-fou contre les erreurs et les abus.
 const (
-	maxDomains = 5000
-	maxLists   = 30
+	maxDomains         = 5000
+	maxLists           = 30
+	maxGroups          = 30
+	maxGroupClients    = 200
+	maxGroupDomains    = 1000
+	maxGroupNameLength = 40
 )
 
 var (
@@ -63,11 +68,29 @@ type ListEntry struct {
 	Source string `json:"source"`
 }
 
+// Group : des clients qui ont leurs propres règles de filtrage.
+type Group struct {
+	Name     string   `json:"name"`
+	Clients  []string `json:"clients"`   // adresses ("192.168.1.50") ou réseaux ("192.168.1.0/24")
+	Mode     string   `json:"mode"`      // "custom" : filtrage avec règles propres ; "off" : aucun blocage
+	AllLists bool     `json:"all_lists"` // true : toutes les listes de filtres
+	Lists    []string `json:"lists"`     // sinon, seulement ces listes (leurs adresses)
+	Allow    []string `json:"allow"`     // domaines jamais bloqués pour ce groupe
+	Block    []string `json:"block"`     // domaines toujours bloqués pour ce groupe
+}
+
+// Modes d'un groupe.
+const (
+	ModeCustom = "custom"
+	ModeOff    = "off"
+)
+
 // state est ce qui est sauvegardé sur disque.
 type state struct {
 	Allowlist []string    `json:"allowlist"`
 	Blocklist []string    `json:"blocklist"`
 	Lists     []stateList `json:"lists"`
+	Groups    []Group     `json:"groups"`
 }
 
 type stateList struct {
@@ -113,6 +136,9 @@ func (s *Store) apply(refreshLists bool) {
 		append(append([]string(nil), s.cfg.Allowlist...), s.st.Allowlist...),
 		append(append([]string(nil), s.cfg.Blocklist...), s.st.Blocklist...),
 	)
+	if err := s.engine.SetGroups(groupSpecs(s.st.Groups)); err != nil {
+		slog.Warn("groupes de clients ignorés", "err", err) // ne peut arriver que si state.json a été modifié à la main
+	}
 	var sources []filter.Source
 	for _, l := range s.allLists() {
 		sources = append(sources, filter.Source{Name: l.Name, URL: l.URL})
@@ -292,9 +318,20 @@ func (s *Store) RemoveList(rawURL string) error {
 	for i, l := range s.st.Lists {
 		if l.URL == rawURL {
 			old := append([]stateList(nil), s.st.Lists...)
+			oldGroups := cloneGroups(s.st.Groups)
 			s.st.Lists = append(s.st.Lists[:i], s.st.Lists[i+1:]...)
+			for gi := range s.st.Groups { // les groupes ne doivent pas garder une référence à une liste disparue
+				kept := []string{}
+				for _, u := range s.st.Groups[gi].Lists {
+					if u != rawURL {
+						kept = append(kept, u)
+					}
+				}
+				s.st.Groups[gi].Lists = kept
+			}
 			if err := s.save(); err != nil {
 				s.st.Lists = old
+				s.st.Groups = oldGroups
 				return err
 			}
 			s.apply(true) // reconstruit l'index sans cette liste
@@ -307,4 +344,143 @@ func (s *Store) RemoveList(rawURL string) error {
 		}
 	}
 	return ErrNotFound
+}
+
+// groupSpecs convertit les groupes enregistrés en règles pour le moteur de filtrage.
+func groupSpecs(gs []Group) []filter.GroupSpec {
+	specs := make([]filter.GroupSpec, 0, len(gs))
+	for _, g := range gs {
+		specs = append(specs, filter.GroupSpec{
+			Name: g.Name, Clients: g.Clients, Off: g.Mode == ModeOff,
+			AllLists: g.AllLists, Lists: g.Lists, Allow: g.Allow, Block: g.Block,
+		})
+	}
+	return specs
+}
+
+// Groups retourne les groupes de clients, dans l'ordre (le premier groupe qui contient un client s'applique).
+func (s *Store) Groups() []Group {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneGroups(s.st.Groups)
+}
+
+func cloneGroups(gs []Group) []Group {
+	out := make([]Group, 0, len(gs))
+	for _, g := range gs {
+		g.Clients = append([]string{}, g.Clients...)
+		g.Lists = append([]string{}, g.Lists...)
+		g.Allow = append([]string{}, g.Allow...)
+		g.Block = append([]string{}, g.Block...)
+		out = append(out, g)
+	}
+	return out
+}
+
+// SetGroups remplace tous les groupes. Tout est validé avant d'être appliqué : en cas
+// d'erreur, rien n'est modifié.
+func (s *Store) SetGroups(in []Group) error {
+	if len(in) > maxGroups {
+		return fmt.Errorf("%w: %d groupes au maximum", ErrTooMany, maxGroups)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	known := map[string]bool{}
+	for _, l := range s.allLists() {
+		known[l.URL] = true
+	}
+
+	var out []Group
+	seen := map[string]bool{}
+	for _, g := range in {
+		g.Name = strings.TrimSpace(g.Name)
+		if g.Name == "" || len(g.Name) > maxGroupNameLength {
+			return fmt.Errorf("%w: le nom d'un groupe doit faire entre 1 et %d caractères", ErrInvalid, maxGroupNameLength)
+		}
+		if seen[strings.ToLower(g.Name)] {
+			return fmt.Errorf("%w: deux groupes s'appellent « %s »", ErrInvalid, g.Name)
+		}
+		seen[strings.ToLower(g.Name)] = true
+		if g.Mode != ModeCustom && g.Mode != ModeOff {
+			return fmt.Errorf("%w: mode inconnu pour « %s »", ErrInvalid, g.Name)
+		}
+
+		if len(g.Clients) == 0 {
+			return fmt.Errorf("%w: le groupe « %s » n'a aucun client", ErrInvalid, g.Name)
+		}
+		if len(g.Clients) > maxGroupClients {
+			return fmt.Errorf("%w: « %s » : %d clients au maximum", ErrTooMany, g.Name, maxGroupClients)
+		}
+		clients := make([]string, 0, len(g.Clients))
+		for _, c := range g.Clients {
+			if _, err := filter.ParseClient(c); err != nil {
+				return fmt.Errorf("%w: groupe « %s » : %v", ErrInvalid, g.Name, err)
+			}
+			clients = append(clients, strings.TrimSpace(c))
+		}
+		g.Clients = clients
+
+		g.Allow, g.Block = nil2empty(g.Allow), nil2empty(g.Block)
+		var err error
+		if g.Allow, err = normalizeDomains(g.Name, g.Allow); err != nil {
+			return err
+		}
+		if g.Block, err = normalizeDomains(g.Name, g.Block); err != nil {
+			return err
+		}
+
+		if g.AllLists {
+			g.Lists = []string{}
+		} else {
+			for _, u := range g.Lists {
+				if !known[u] {
+					return fmt.Errorf("%w: groupe « %s » : liste inconnue (%s)", ErrInvalid, g.Name, u)
+				}
+			}
+			g.Lists = nil2empty(g.Lists)
+		}
+		out = append(out, g)
+	}
+
+	// Le moteur est le dernier juge : s'il refuse, on n'enregistre rien.
+	if err := s.engine.SetGroups(groupSpecs(out)); err != nil {
+		_ = s.engine.SetGroups(groupSpecs(s.st.Groups)) // retour à l'état précédent
+		return fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	old := s.st.Groups
+	s.st.Groups = out
+	if err := s.save(); err != nil {
+		s.st.Groups = old
+		_ = s.engine.SetGroups(groupSpecs(old))
+		return err
+	}
+	return nil
+}
+
+func nil2empty(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// normalizeDomains valide et normalise des domaines (sans doublon).
+func normalizeDomains(group string, in []string) ([]string, error) {
+	if len(in) > maxGroupDomains {
+		return nil, fmt.Errorf("%w: groupe « %s » : %d domaines au maximum par liste", ErrTooMany, group, maxGroupDomains)
+	}
+	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
+	for _, d := range in {
+		n, ok := filter.ValidateDomain(strings.TrimSpace(d))
+		if !ok {
+			return nil, fmt.Errorf("%w: groupe « %s » : %q n'est pas un nom de domaine", ErrInvalid, group, d)
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }

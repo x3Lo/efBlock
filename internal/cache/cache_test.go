@@ -229,3 +229,152 @@ func TestGetReturnsIndependentCopy(t *testing.T) {
 		t.Errorf("le cache a été corrompu: %s", ip)
 	}
 }
+
+// --- Réponse périmée (serve-stale) ---
+
+func TestStaleServedWhenAllowedAndNotTooOld(t *testing.T) {
+	c, clk := newTestCache(10, 0)
+	c.SetStale(time.Hour)
+	req := query("example.com.", dns.TypeA, 1)
+	c.Put(req, answerA(req, "1.2.3.4", 60))
+
+	clk.advance(10 * time.Minute) // périmée depuis 9 minutes
+	if _, ok := c.Get(req); ok {
+		t.Fatal("Get ne doit jamais renvoyer une réponse périmée")
+	}
+	got, ok := c.GetStale(query("example.com.", dns.TypeA, 99))
+	if !ok {
+		t.Fatal("la réponse périmée doit servir de secours")
+	}
+	if got.Answer[0].(*dns.A).A.String() != "1.2.3.4" || got.Id != 99 {
+		t.Errorf("réponse de secours incorrecte: %+v", got)
+	}
+	if ttl := got.Answer[0].Header().Ttl; ttl != staleTTL {
+		t.Errorf("TTL = %d, attendu %d (RFC 8767)", ttl, staleTTL)
+	}
+	if c.StaleServed() != 1 {
+		t.Errorf("compteur = %d", c.StaleServed())
+	}
+
+	clk.advance(2 * time.Hour) // trop vieille maintenant
+	if _, ok := c.GetStale(req); ok {
+		t.Error("au-delà de la durée de secours, la réponse ne doit plus être servie")
+	}
+	if _, _, n := c.Stats(); n != 0 {
+		t.Errorf("l'entrée trop vieille doit être supprimée (%d restantes)", n)
+	}
+}
+
+func TestStaleDisabledByDefault(t *testing.T) {
+	c, clk := newTestCache(10, 0)
+	req := query("example.com.", dns.TypeA, 1)
+	c.Put(req, answerA(req, "1.2.3.4", 60))
+	clk.advance(2 * time.Minute)
+	if _, ok := c.GetStale(req); ok {
+		t.Error("sans SetStale, aucune réponse périmée ne doit être servie")
+	}
+	c.Get(req) // la lecture normale d'une entrée périmée la supprime, faute de secours
+	if _, _, n := c.Stats(); n != 0 {
+		t.Error("sans secours, une entrée périmée est supprimée à la lecture")
+	}
+}
+
+func TestStaleKeepsExpiredEntryUntilWindowEnds(t *testing.T) {
+	c, clk := newTestCache(10, 0)
+	c.SetStale(time.Hour)
+	req := query("example.com.", dns.TypeA, 1)
+	c.Put(req, answerA(req, "1.2.3.4", 60))
+	clk.advance(5 * time.Minute)
+	c.Get(req) // lecture d'une entrée périmée : elle ne doit pas être supprimée
+	if _, _, n := c.Stats(); n != 1 {
+		t.Errorf("l'entrée périmée doit rester disponible comme secours (%d en cache)", n)
+	}
+}
+
+func TestStaleDoesNotTouchOptRecord(t *testing.T) {
+	c, clk := newTestCache(10, 0)
+	c.SetStale(time.Hour)
+	req := query("example.com.", dns.TypeA, 1)
+	req.SetEdns0(1232, false)
+	resp := answerA(req, "1.2.3.4", 60)
+	resp.SetEdns0(1232, false)
+	opt := resp.IsEdns0().Hdr.Ttl
+	c.Put(req, resp)
+	clk.advance(5 * time.Minute)
+	got, ok := c.GetStale(req)
+	if !ok || got.IsEdns0() == nil || got.IsEdns0().Hdr.Ttl != opt {
+		t.Error("le champ \"TTL\" de l'OPT contient des drapeaux : il ne doit pas être modifié")
+	}
+}
+
+// --- Préchargement ---
+
+func TestPrefetchOnlyForPopularAndAlmostExpired(t *testing.T) {
+	c, clk := newTestCache(10, 0)
+	c.SetPrefetch(true)
+	req := query("example.com.", dns.TypeA, 1)
+	c.Put(req, answerA(req, "1.2.3.4", 100))
+
+	// Au début de sa vie : pas de préchargement.
+	if r := c.Lookup(req); r.Msg == nil || r.Prefetch {
+		t.Fatalf("1re lecture: %+v", r)
+	}
+	clk.advance(50 * time.Second)
+	if r := c.Lookup(req); r.Prefetch {
+		t.Error("à mi-vie : trop tôt pour précharger")
+	}
+
+	// Presque périmée (moins de 10 % restant) et déjà demandée plusieurs fois.
+	clk.advance(45 * time.Second) // reste 5 s sur 100 s
+	r := c.Lookup(req)
+	if r.Msg == nil || !r.Prefetch {
+		t.Fatalf("une réponse populaire bientôt périmée doit être préchargée: %+v", r)
+	}
+	// Un seul préchargement à la fois pour cette réponse.
+	if r := c.Lookup(req); r.Prefetch {
+		t.Error("le préchargement ne doit être demandé qu'une fois tant qu'il est en cours")
+	}
+	// Une fois la réponse rafraîchie (Put), un nouveau cycle commence, compteur remis à zéro.
+	c.Put(req, answerA(req, "1.2.3.4", 100))
+	clk.advance(95 * time.Second)
+	if r := c.Lookup(req); r.Prefetch {
+		t.Error("1re lecture du nouveau cycle : pas encore \"populaire\"")
+	}
+	if r := c.Lookup(req); !r.Prefetch {
+		t.Error("2e lecture presque périmée : le préchargement doit se redéclencher")
+	}
+	if r := c.Lookup(req); r.Prefetch {
+		t.Error("une seule demande par cycle")
+	}
+}
+
+func TestNoPrefetchForRarelyUsedOrShortTTL(t *testing.T) {
+	c, clk := newTestCache(10, 0)
+	c.SetPrefetch(true)
+
+	rare := query("rare.example.com.", dns.TypeA, 1)
+	c.Put(rare, answerA(rare, "1.1.1.1", 100))
+	clk.advance(97 * time.Second)
+	if r := c.Lookup(rare); r.Prefetch { // une seule lecture : pas "populaire"
+		t.Error("une réponse demandée une seule fois n'est pas préchargée")
+	}
+
+	short := query("court.example.com.", dns.TypeA, 1)
+	c.Put(short, answerA(short, "2.2.2.2", 5)) // TTL de 5 s : trop court pour valoir le coup
+	c.Lookup(short)
+	clk.advance(4500 * time.Millisecond)
+	if r := c.Lookup(short); r.Prefetch {
+		t.Error("un TTL très court n'est pas préchargé")
+	}
+}
+
+func TestPrefetchDisabledByDefault(t *testing.T) {
+	c, clk := newTestCache(10, 0)
+	req := query("example.com.", dns.TypeA, 1)
+	c.Put(req, answerA(req, "1.2.3.4", 100))
+	c.Lookup(req)
+	clk.advance(95 * time.Second)
+	if r := c.Lookup(req); r.Prefetch {
+		t.Error("sans SetPrefetch(true), jamais de préchargement")
+	}
+}

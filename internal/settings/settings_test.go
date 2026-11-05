@@ -190,3 +190,61 @@ func TestViewListsInfraAndFormatsDurations(t *testing.T) {
 		t.Errorf("le JSON ne doit pas contenir de null (listes vides = []): %s", b)
 	}
 }
+
+func TestNewOptionsDefaultsAndRoundtrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.json")
+	m, _ := Open(path, baseConfig(t))
+	v := m.View().Effective
+	if v.Filter.CNAMECheck == nil || !*v.Filter.CNAMECheck {
+		t.Error("la vérification des alias est active par défaut")
+	}
+	if v.Cache.ServeStale == nil || !*v.Cache.ServeStale || v.Cache.StaleMax != "24h" || v.Cache.Prefetch == nil || !*v.Cache.Prefetch {
+		t.Errorf("valeurs par défaut du cache: %+v", v.Cache)
+	}
+
+	off := false
+	if err := m.Update(GroupFilter, raw(Filter{BlockMode: "zero_ip", UpdateInterval: "24h", CNAMECheck: &off})); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Update(GroupCache, raw(Cache{Enabled: true, MaxEntries: 500, MaxTTL: "1h", ServeStale: &off, StaleMax: "6h", Prefetch: &off})); err != nil {
+		t.Fatal(err)
+	}
+	e := m.Effective()
+	if e.Filter.CNAMEEnabled() || e.Cache.ServeStaleEnabled() || e.Cache.PrefetchEnabled() || e.Cache.StaleMax != 6*time.Hour {
+		t.Errorf("effectif: %+v %+v", e.Filter, e.Cache)
+	}
+	if e.Cache.StaleWindow() != 0 {
+		t.Error("secours désactivé : durée effective nulle")
+	}
+
+	m2, _ := Open(path, baseConfig(t)) // redémarrage
+	if m2.Effective().Filter.CNAMEEnabled() || m2.Effective().Cache.PrefetchEnabled() {
+		t.Error("les nouvelles options doivent survivre au redémarrage")
+	}
+	if err := m.Update(GroupCache, raw(Cache{Enabled: true, MaxEntries: 500, MaxTTL: "1h", StaleMax: "demain"})); err == nil || !strings.Contains(err.Error(), "stale_max") {
+		t.Errorf("stale_max invalide: %v", err)
+	}
+}
+
+// Un settings.json écrit par une version précédente (sans les nouvelles options) doit rester lisible.
+func TestOldSettingsFileStillLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.json")
+	old := `{"cache":{"enabled":true,"max_entries":777,"max_ttl":"2h"},"filter":{"block_mode":"nxdomain","update_interval":"12h"}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Open(path, baseConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := m.Effective()
+	if e.Cache.MaxEntries != 777 || e.Filter.BlockMode != "nxdomain" {
+		t.Errorf("valeurs de l'ancien fichier perdues: %+v %+v", e.Cache, e.Filter)
+	}
+	if !e.Filter.CNAMEEnabled() || !e.Cache.ServeStaleEnabled() || !e.Cache.PrefetchEnabled() || e.Cache.StaleMax != 24*time.Hour {
+		t.Errorf("les options absentes doivent prendre leur valeur par défaut: %+v %+v", e.Filter, e.Cache)
+	}
+	if _, err := os.Stat(path + ".bad"); err == nil {
+		t.Error("un ancien fichier valide ne doit pas être mis de côté")
+	}
+}

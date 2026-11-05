@@ -97,3 +97,30 @@ func TestExampleConfigIsValid(t *testing.T) {
 		t.Errorf("exemple incomplet: %+v", cfg)
 	}
 }
+
+func TestNewOptionDefaultsAndOverrides(t *testing.T) {
+	cfg, err := Load(write(t, "dns:\n  upstreams: [\"1.1.1.1\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Filter.CNAMEEnabled() || !cfg.Cache.ServeStaleEnabled() || !cfg.Cache.PrefetchEnabled() {
+		t.Error("alias, secours et préchargement sont activés par défaut")
+	}
+	if cfg.Cache.StaleMax != 24*time.Hour || cfg.Cache.StaleWindow() != 24*time.Hour {
+		t.Errorf("secours par défaut: %v", cfg.Cache.StaleMax)
+	}
+
+	cfg, err = Load(write(t, "dns:\n  upstreams: [\"1.1.1.1\"]\nfilter:\n  cname_check: false\ncache:\n  serve_stale: false\n  prefetch: false\n  stale_max: 2h\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Filter.CNAMEEnabled() || cfg.Cache.ServeStaleEnabled() || cfg.Cache.PrefetchEnabled() || cfg.Cache.StaleMax != 2*time.Hour {
+		t.Errorf("valeurs explicites ignorées: %+v %+v", cfg.Filter, cfg.Cache)
+	}
+	if cfg.Cache.StaleWindow() != 0 {
+		t.Error("serve_stale: false : durée effective nulle")
+	}
+	if _, err := Load(write(t, "dns:\n  upstreams: [\"1.1.1.1\"]\ncache:\n  stale_max: -1h\n")); err == nil {
+		t.Error("stale_max négatif doit être refusé")
+	}
+}

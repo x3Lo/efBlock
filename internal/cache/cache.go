@@ -4,6 +4,7 @@ package cache
 
 import (
 	"container/list"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,13 +36,25 @@ func keyFor(req *dns.Msg) key {
 	return k
 }
 
+// KeyString identifie une question sous forme de texte (pour fusionner les requêtes identiques).
+func KeyString(req *dns.Msg) string {
+	if len(req.Question) != 1 {
+		return ""
+	}
+	k := keyFor(req)
+	return fmt.Sprintf("%s|%d|%d|%t", k.name, k.qtype, k.qclass, k.do)
+}
+
 // entry est une réponse mémorisée. Une fois stockée, elle n'est JAMAIS
 // modifiée : chaque lecture travaille sur une copie.
 type entry struct {
-	key     key
-	msg     *dns.Msg
-	stored  time.Time
-	expires time.Time
+	key         key
+	msg         *dns.Msg
+	stored      time.Time
+	expires     time.Time
+	ttl         time.Duration // durée de vie d'origine (sert à décider du préchargement)
+	hits        uint32        // nombre de fois servie (sert à décider du préchargement)
+	prefetching bool          // un rafraîchissement est déjà en cours
 }
 
 // Cache est un cache DNS borné (éviction LRU), sûr pour un usage concurrent.
@@ -49,11 +62,44 @@ type Cache struct {
 	mu     sync.Mutex
 	max    int
 	maxTTL time.Duration
-	items  map[key]*list.Element // clé -> noeud de la liste
-	lru    *list.List            // devant = utilisé récemment, fond = candidat à l'éviction
-	now    func() time.Time      // horloge, remplaçable dans les tests
 
-	hits, misses atomic.Uint64
+	staleMax time.Duration // durée pendant laquelle une réponse périmée reste utilisable en secours (0 = jamais)
+	prefetch bool          // rafraîchir en avance les réponses populaires
+
+	items map[key]*list.Element // clé -> noeud de la liste
+	lru   *list.List            // devant = utilisé récemment, fond = candidat à l'éviction
+	now   func() time.Time      // horloge, remplaçable dans les tests
+
+	hits, misses, stale atomic.Uint64
+}
+
+// staleTTL : durée (secondes) annoncée aux clients pour une réponse périmée.
+// 30 s est la valeur recommandée par la RFC 8767 : assez pour que le client ne
+// redemande pas en boucle, assez court pour qu'il retente vite quand tout va mieux.
+const staleTTL = 30
+
+// Seuils du préchargement : une réponse déjà demandée au moins 2 fois dont il
+// reste moins de 10 % de la durée de vie est rafraîchie en arrière-plan, pour
+// qu'elle ne soit jamais périmée au moment où on en a besoin.
+const (
+	prefetchMinHits  = 2
+	prefetchFraction = 10
+	prefetchMinTTL   = 10 * time.Second
+)
+
+// SetStale règle la durée pendant laquelle une réponse périmée peut servir de secours
+// quand aucun upstream ne répond (0 = désactivé).
+func (c *Cache) SetStale(d time.Duration) {
+	c.mu.Lock()
+	c.staleMax = d
+	c.mu.Unlock()
+}
+
+// SetPrefetch active ou désactive le préchargement des réponses populaires.
+func (c *Cache) SetPrefetch(on bool) {
+	c.mu.Lock()
+	c.prefetch = on
+	c.mu.Unlock()
 }
 
 // New crée un cache de maxEntries réponses au plus. maxTTL plafonne la durée
@@ -76,11 +122,26 @@ func (c *Cache) Stats() (hits, misses uint64, entries int) {
 	return c.hits.Load(), c.misses.Load(), entries
 }
 
+// StaleServed retourne le nombre de réponses périmées servies en secours.
+func (c *Cache) StaleServed() uint64 { return c.stale.Load() }
+
+// Result est le résultat d'une recherche dans le cache.
+type Result struct {
+	Msg      *dns.Msg // la réponse prête à être envoyée ; nil si absente ou périmée
+	Prefetch bool     // true : la réponse est valide mais bientôt périmée, à rafraîchir en arrière-plan
+}
+
 // Get cherche la réponse à req. Si elle est en cache et encore valide, elle est
 // retournée prête à être envoyée : bon ID, bonne question, TTL décrémentés.
 func (c *Cache) Get(req *dns.Msg) (*dns.Msg, bool) {
+	r := c.Lookup(req)
+	return r.Msg, r.Msg != nil
+}
+
+// Lookup est comme Get, et indique en plus s'il faut précharger cette réponse.
+func (c *Cache) Lookup(req *dns.Msg) Result {
 	if len(req.Question) != 1 {
-		return nil, false
+		return Result{}
 	}
 	k := keyFor(req)
 
@@ -89,34 +150,88 @@ func (c *Cache) Get(req *dns.Msg) (*dns.Msg, bool) {
 	if !ok {
 		c.mu.Unlock()
 		c.misses.Add(1)
-		return nil, false
+		return Result{}
 	}
 	e := el.Value.(*entry)
 	now := c.now()
-	if !now.Before(e.expires) { // entrée périmée : on la jette
-		c.lru.Remove(el)
-		delete(c.items, k)
+	if !now.Before(e.expires) { // entrée périmée
+		// On la garde un moment : elle peut encore servir de secours (voir GetStale).
+		if c.staleMax <= 0 || !now.Before(e.expires.Add(c.staleMax)) {
+			c.lru.Remove(el)
+			delete(c.items, k)
+		}
 		c.mu.Unlock()
 		c.misses.Add(1)
-		return nil, false
+		return Result{}
 	}
 	c.lru.MoveToFront(el)
+	e.hits++
+	remaining := e.expires.Sub(now)
+	prefetch := c.prefetch && !e.prefetching && e.hits >= prefetchMinHits &&
+		e.ttl >= prefetchMinTTL && remaining < e.ttl/prefetchFraction
+	if prefetch {
+		e.prefetching = true // un seul rafraîchissement à la fois pour cette réponse
+	}
 	c.mu.Unlock()
 	c.hits.Add(1)
 
 	// e.msg n'est jamais modifié après Put : on peut le copier hors du verrou.
 	msg := e.msg.Copy()
 	elapsed := uint32(now.Sub(e.stored) / time.Second)
-	remaining := uint32((e.expires.Sub(now) + time.Second - 1) / time.Second) // arrondi au-dessus
-	adjustTTLs(msg, elapsed, remaining)
+	remainingSec := uint32((remaining + time.Second - 1) / time.Second) // arrondi au-dessus
+	adjustTTLs(msg, elapsed, remainingSec)
+	finish(msg, req)
+	return Result{Msg: msg, Prefetch: prefetch}
+}
 
-	// La réponse doit "répondre" à CETTE requête : même ID (le client s'en
-	// sert pour associer question et réponse) et même question, avec la casse
-	// exacte que le client a envoyée.
+// GetStale retourne une réponse PÉRIMÉE (mais pas trop ancienne) pour req, à utiliser
+// quand aucun upstream ne répond.
+//
+// Concept DNS (RFC 8767, "serve-stale") : une réponse un peu vieille vaut mieux que
+// pas de réponse du tout. Si tous les upstreams sont injoignables, un site déjà
+// visité continue de s'ouvrir avec son ancienne adresse IP, au lieu de tomber en
+// erreur. Les adresses changent rarement, et le client est invité à réessayer
+// bientôt (TTL de 30 s).
+func (c *Cache) GetStale(req *dns.Msg) (*dns.Msg, bool) {
+	if len(req.Question) != 1 {
+		return nil, false
+	}
+	k := keyFor(req)
+	c.mu.Lock()
+	el, ok := c.items[k]
+	if !ok || c.staleMax <= 0 {
+		c.mu.Unlock()
+		return nil, false
+	}
+	e := el.Value.(*entry)
+	if !c.now().Before(e.expires.Add(c.staleMax)) { // vraiment trop vieille
+		c.lru.Remove(el)
+		delete(c.items, k)
+		c.mu.Unlock()
+		return nil, false
+	}
+	c.mu.Unlock()
+	c.stale.Add(1)
+
+	msg := e.msg.Copy()
+	adjustTTLs(msg, 0, staleTTL)
+	for _, section := range [][]dns.RR{msg.Answer, msg.Ns, msg.Extra} {
+		for _, rr := range section {
+			if h := rr.Header(); h.Rrtype != dns.TypeOPT {
+				h.Ttl = staleTTL
+			}
+		}
+	}
+	finish(msg, req)
+	return msg, true
+}
+
+// finish fait de msg la réponse à CETTE requête : même ID (le client s'en sert pour
+// associer question et réponse) et même question, avec la casse exacte envoyée.
+func finish(msg, req *dns.Msg) {
 	msg.Id = req.Id
 	msg.Question = []dns.Question{req.Question[0]}
 	msg.RecursionDesired = req.RecursionDesired
-	return msg, true
 }
 
 // Put mémorise resp (la réponse de l'upstream à req) si elle est cachable.
@@ -139,7 +254,7 @@ func (c *Cache) Put(req, resp *dns.Msg) {
 	}
 
 	now := c.now()
-	e := &entry{key: keyFor(req), msg: resp.Copy(), stored: now, expires: now.Add(d)}
+	e := &entry{key: keyFor(req), msg: resp.Copy(), stored: now, expires: now.Add(d), ttl: d}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()

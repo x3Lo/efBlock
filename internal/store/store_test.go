@@ -2,8 +2,10 @@ package store
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,5 +114,121 @@ func TestLists(t *testing.T) {
 	}
 	if got := s.Lists(); len(got) != 1 || got[0].Name != "Fixe" {
 		t.Errorf("Lists = %+v", got)
+	}
+}
+
+// --- Groupes de clients ---
+
+func newStoreWithList(t *testing.T) (*Store, *filter.Engine, string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	eng := filter.NewEngine()
+	list := filepath.Join(dir, "liste.txt")
+	os.WriteFile(list, []byte("0.0.0.0 pub.example.com\n"), 0o644)
+	upd := filter.NewUpdater(eng, []filter.Source{{Name: "L", URL: list}}, dir, time.Hour)
+	upd.Rebuild()
+	path := filepath.Join(dir, "state.json")
+	s, err := Open(path, nil, nil, []filter.Source{{Name: "L", URL: list}}, eng, upd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, eng, list, path
+}
+
+func TestGroupsAppliedAndPersisted(t *testing.T) {
+	s, eng, list, path := newStoreWithList(t)
+	err := s.SetGroups([]Group{
+		{Name: " Invités ", Clients: []string{"192.168.1.50", "192.168.2.0/24"}, Mode: ModeOff},
+		{Name: "Enfants", Clients: []string{"192.168.1.20"}, Mode: ModeCustom, AllLists: false, Lists: []string{list},
+			Block: []string{"JEUX.Example.NET."}, Allow: []string{"ecole.example.org"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := func(x string) net.IP { return net.ParseIP(x) }
+
+	if v := eng.CheckClient(ip("192.168.2.9"), "pub.example.com"); v.Blocked || v.Group != "Invités" {
+		t.Errorf("groupe sans blocage: %+v", v)
+	}
+	if v := eng.CheckClient(ip("192.168.1.20"), "jeux.example.net"); !v.Blocked || v.Group != "Enfants" {
+		t.Errorf("la blocklist du groupe s'applique (domaine normalisé): %+v", v)
+	}
+	if got := s.Groups(); got[0].Name != "Invités" || got[1].Block[0] != "jeux.example.net" {
+		t.Errorf("noms et domaines normalisés attendus: %+v", got)
+	}
+
+	// Redémarrage : les groupes reviennent depuis state.json.
+	eng2 := filter.NewEngine()
+	upd2 := filter.NewUpdater(eng2, []filter.Source{{Name: "L", URL: list}}, t.TempDir(), time.Hour)
+	upd2.Rebuild()
+	if _, err := Open(path, nil, nil, []filter.Source{{Name: "L", URL: list}}, eng2, upd2); err != nil {
+		t.Fatal(err)
+	}
+	if v := eng2.CheckClient(ip("192.168.1.50"), "pub.example.com"); v.Group != "Invités" {
+		t.Errorf("après redémarrage: %+v", v)
+	}
+}
+
+func TestGroupsValidation(t *testing.T) {
+	s, eng, list, _ := newStoreWithList(t)
+	good := Group{Name: "Bon", Clients: []string{"192.168.1.5"}, Mode: ModeOff}
+	if err := s.SetGroups([]Group{good}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		in   []Group
+		want string
+	}{
+		{"nom vide", []Group{{Name: " ", Clients: []string{"1.2.3.4"}, Mode: ModeOff}}, "nom"},
+		{"nom trop long", []Group{{Name: strings.Repeat("a", 41), Clients: []string{"1.2.3.4"}, Mode: ModeOff}}, "nom"},
+		{"doublon de nom", []Group{{Name: "A", Clients: []string{"1.2.3.4"}, Mode: ModeOff}, {Name: "a", Clients: []string{"1.2.3.5"}, Mode: ModeOff}}, "s'appellent"},
+		{"mode inconnu", []Group{{Name: "A", Clients: []string{"1.2.3.4"}, Mode: "boum"}}, "mode"},
+		{"aucun client", []Group{{Name: "A", Mode: ModeOff}}, "aucun client"},
+		{"client invalide", []Group{{Name: "A", Clients: []string{"pas-une-ip"}, Mode: ModeOff}}, "pas-une-ip"},
+		{"domaine invalide", []Group{{Name: "A", Clients: []string{"1.2.3.4"}, Mode: ModeCustom, AllLists: true, Block: []string{"pas un domaine"}}}, "nom de domaine"},
+		{"liste inconnue", []Group{{Name: "A", Clients: []string{"1.2.3.4"}, Mode: ModeCustom, Lists: []string{"https://inconnue/x"}}}, "liste inconnue"},
+	}
+	for _, tt := range tests {
+		err := s.SetGroups(tt.in)
+		if err == nil || !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s : erreur = %v, attendu ErrInvalid contenant %q", tt.name, err, tt.want)
+		}
+	}
+	// Trop de groupes.
+	many := make([]Group, 31)
+	for i := range many {
+		many[i] = Group{Name: strings.Repeat("g", 1) + string(rune('a'+i%26)) + string(rune('a'+i/26)), Clients: []string{"1.2.3.4"}, Mode: ModeOff}
+	}
+	if err := s.SetGroups(many); !errors.Is(err, ErrTooMany) {
+		t.Errorf("31 groupes: %v", err)
+	}
+
+	// Après tous ces refus, l'état précédent est intact.
+	if got := s.Groups(); len(got) != 1 || got[0].Name != "Bon" {
+		t.Errorf("les groupes précédents doivent rester: %+v", got)
+	}
+	if v := eng.CheckClient(net.ParseIP("192.168.1.5"), "pub.example.com"); v.Group != "Bon" {
+		t.Error("le moteur doit garder les groupes précédents")
+	}
+	_ = list
+}
+
+func TestRemovingAListPrunesGroups(t *testing.T) {
+	s, _, list, _ := newStoreWithList(t)
+	if err := s.AddList("Extra", "https://exemple.org/extra.txt"); err != nil {
+		t.Fatal(err)
+	}
+	err := s.SetGroups([]Group{{Name: "G", Clients: []string{"1.2.3.4"}, Mode: ModeCustom, Lists: []string{list, "https://exemple.org/extra.txt"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveList("https://exemple.org/extra.txt"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Groups()
+	if len(got[0].Lists) != 1 || got[0].Lists[0] != list {
+		t.Errorf("la liste supprimée doit disparaître des groupes: %v", got[0].Lists)
 	}
 }

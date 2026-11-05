@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/x3Lo/efBlock/internal/cache"
 	"github.com/x3Lo/efBlock/internal/filter"
@@ -53,6 +54,8 @@ type Server struct {
 	clients  atomic.Pointer[[]*net.IPNet]
 	local    atomic.Pointer[localdns.Zone]
 	nxdomain atomic.Bool
+
+	flight singleflight.Group // fusionne les requêtes identiques simultanées
 
 	refused        atomic.Uint64 // requêtes refusées par le contrôle d'accès
 	lastRefusedLog atomic.Int64  // dernier avertissement (nanosecondes Unix)
@@ -165,30 +168,69 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	// 1. Filtrage : avant tout accès au réseau, on regarde si le domaine
-	// est bloqué. Un domaine bloqué ne quitte jamais la maison.
-	if v := s.opts.Filter.Check(q.Name); v.Blocked {
-		slog.Debug("bloqué", "name", q.Name, "type", qtype, "règle", v.Rule, "raison", v.Reason)
+	// est bloqué. Un domaine bloqué ne quitte jamais la maison. Le verdict dépend du
+	// client : un groupe peut avoir ses propres listes et règles, ou aucun blocage.
+	eng := s.opts.Filter
+	cip := net.ParseIP(clientIP(w))
+	v := eng.CheckClient(cip, q.Name)
+	if v.Blocked {
+		slog.Debug("bloqué", "name", q.Name, "type", qtype, "règle", v.Rule, "raison", v.Reason, "groupe", v.Group)
 		resp := s.blockedResponse(req, q)
 		s.reply(w, req, resp)
 		record(querylog.ActionBlocked, v.Rule, resp.Rcode)
 		return
 	}
 
+	// blockAlias : le nom demandé est innocent, mais un de ses alias (CNAME) mène à
+	// un domaine bloqué ("CNAME cloaking"). On vérifie aussi bien les réponses qui
+	// viennent d'internet que celles du cache, pour qu'une règle ajoutée après coup
+	// s'applique tout de suite.
+	blockAlias := func(resp *dns.Msg) bool {
+		cv, blocked := eng.CheckAliases(cip, v, aliasTargets(resp))
+		if !blocked {
+			return false
+		}
+		slog.Debug("bloqué via alias", "name", q.Name, "alias", cv.Via, "règle", cv.Rule)
+		bresp := s.blockedResponse(req, q)
+		s.reply(w, req, bresp)
+		record(querylog.ActionBlocked, "CNAME "+cv.Via+" ("+cv.Rule+")", bresp.Rcode)
+		return true
+	}
+
 	// 2. Cache : si on a déjà la réponse (et qu'elle n'est pas périmée), on la
 	// sert sans toucher au réseau.
 	c := s.cache.Load()
 	if c != nil {
-		if resp, ok := c.Get(req); ok {
-			slog.Debug("cache", "name", q.Name, "type", qtype, "rcode", dns.RcodeToString[resp.Rcode])
-			s.reply(w, req, resp)
-			record(querylog.ActionCached, "", resp.Rcode)
+		if r := c.Lookup(req); r.Msg != nil {
+			slog.Debug("cache", "name", q.Name, "type", qtype, "rcode", dns.RcodeToString[r.Msg.Rcode])
+			if r.Prefetch {
+				go s.prefetch(req.Copy(), c) // rafraîchit en arrière-plan, sans faire attendre ce client
+			}
+			if blockAlias(r.Msg) {
+				return
+			}
+			s.reply(w, req, r.Msg)
+			record(querylog.ActionCached, "", r.Msg.Rcode)
 			return
 		}
 	}
 
 	// 3. Upstream.
-	resp, err := s.upstream.Load().Resolve(req)
+	resp, err := s.resolve(req)
 	if err != nil {
+		// Aucun upstream n'a répondu. Plutôt que d'échouer, on sert si possible une
+		// ancienne réponse (serve-stale, RFC 8767) : un site déjà visité reste joignable.
+		if c != nil {
+			if stale, ok := c.GetStale(req); ok {
+				slog.Warn("upstreams injoignables : réponse périmée servie", "name", q.Name, "type", qtype)
+				if blockAlias(stale) {
+					return
+				}
+				s.reply(w, req, stale)
+				record(querylog.ActionCached, "stale", stale.Rcode)
+				return
+			}
+		}
 		slog.Warn("échec upstream", "name", q.Name, "type", qtype, "err", err)
 		// SERVFAIL = "j'ai essayé mais je n'ai pas pu résoudre".
 		fail := new(dns.Msg)
@@ -202,8 +244,54 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 	if c != nil {
 		c.Put(req, resp) // Put copie : on peut ensuite modifier resp (troncature)
 	}
+	if blockAlias(resp) {
+		return
+	}
 	s.reply(w, req, resp)
 	record(querylog.ActionForwarded, "", resp.Rcode)
+}
+
+// resolve interroge les upstreams en fusionnant les demandes identiques simultanées.
+//
+// Concept : quand dix appareils demandent le même domaine en même temps (un site
+// qui vient d'expirer du cache), on n'envoie qu'UNE requête à l'upstream, et les
+// dix reçoivent sa réponse ("singleflight"). Ça évite de multiplier le trafic, et
+// d'être limité par l'upstream.
+func (s *Server) resolve(req *dns.Msg) (*dns.Msg, error) {
+	v, err, _ := s.flight.Do(cache.KeyString(req), func() (any, error) {
+		return s.upstream.Load().Resolve(req)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Chaque demandeur reçoit sa PROPRE copie, avec son identifiant et sa question.
+	resp := v.(*dns.Msg).Copy()
+	resp.Id = req.Id
+	resp.Question = []dns.Question{req.Question[0]}
+	return resp, nil
+}
+
+// prefetch rafraîchit une réponse du cache bientôt périmée, pour qu'elle ne le soit
+// jamais quand quelqu'un en a besoin. Son échec est sans conséquence : l'ancienne
+// réponse reste valable jusqu'à son terme.
+func (s *Server) prefetch(req *dns.Msg, c *cache.Cache) {
+	resp, err := s.resolve(req)
+	if err != nil {
+		slog.Debug("préchargement échoué", "name", req.Question[0].Name, "err", err)
+		return
+	}
+	c.Put(req, resp)
+}
+
+// aliasTargets retourne les noms vers lesquels la réponse redirige (alias CNAME).
+func aliasTargets(resp *dns.Msg) []string {
+	var out []string
+	for _, rr := range resp.Answer {
+		if c, ok := rr.(*dns.CNAME); ok {
+			out = append(out, c.Target)
+		}
+	}
+	return out
 }
 
 // clientIP extrait l'IP du client (sans le port) de la connexion.

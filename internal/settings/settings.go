@@ -62,6 +62,7 @@ type Local struct {
 type Filter struct {
 	BlockMode      string `json:"block_mode"`
 	UpdateInterval string `json:"update_interval"`
+	CNAMECheck     *bool  `json:"cname_check,omitempty"` // nil = valeur par défaut (activé)
 }
 
 // Cache : cache DNS.
@@ -69,6 +70,9 @@ type Cache struct {
 	Enabled    bool   `json:"enabled"`
 	MaxEntries int    `json:"max_entries"`
 	MaxTTL     string `json:"max_ttl"`
+	ServeStale *bool  `json:"serve_stale,omitempty"` // nil = valeur par défaut (activé)
+	StaleMax   string `json:"stale_max,omitempty"`   // vide = valeur par défaut (24h)
+	Prefetch   *bool  `json:"prefetch,omitempty"`    // nil = valeur par défaut (activé)
 }
 
 // QueryLog : journal des requêtes.
@@ -198,6 +202,7 @@ func (m *Manager) build(ov Overrides) (*config.Config, error) {
 			return nil, err
 		}
 		c.Filter.UpdateInterval = d
+		c.Filter.CNAMECheck = copyBool(g.CNAMECheck)
 	}
 	if g := ov.Cache; g != nil {
 		enabled := g.Enabled
@@ -208,6 +213,16 @@ func (m *Manager) build(ov Overrides) (*config.Config, error) {
 			return nil, err
 		}
 		c.Cache.MaxTTL = d
+		c.Cache.ServeStale = copyBool(g.ServeStale)
+		c.Cache.Prefetch = copyBool(g.Prefetch)
+		c.Cache.StaleMax = 0 // 0 : Finalize applique la valeur par défaut
+		if g.StaleMax != "" {
+			sd, err := parseDuration("stale_max", g.StaleMax)
+			if err != nil {
+				return nil, err
+			}
+			c.Cache.StaleMax = sd
+		}
 	}
 	if g := ov.QueryLog; g != nil {
 		c.Log.RetentionDays = g.RetentionDays
@@ -222,6 +237,16 @@ func (m *Manager) build(ov Overrides) (*config.Config, error) {
 	}
 	return &c, nil
 }
+
+func copyBool(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+	v := *b
+	return &v
+}
+
+func ptrBool(v bool) *bool { return &v }
 
 func parseDuration(field, s string) (time.Duration, error) {
 	d, err := time.ParseDuration(s)
@@ -387,8 +412,9 @@ func groupsOf(c *config.Config) Groups {
 		Upstream: Upstream{Upstreams: nz(c.DNS.Upstreams), Bootstrap: nz(c.DNS.Bootstrap), Timeout: fmtDuration(c.DNS.Timeout)},
 		Access:   Access{DNSClients: nz(c.DNS.AllowedClients), WebCIDRs: nz(c.Web.AllowedCIDRs)},
 		Local:    Local{Upstream: c.DNS.Local.Upstream, Domains: nz(c.DNS.Local.Domains), Hosts: nz(c.DNS.Local.Hosts)},
-		Filter:   Filter{BlockMode: c.Filter.BlockMode, UpdateInterval: fmtDuration(c.Filter.UpdateInterval)},
-		Cache:    Cache{Enabled: c.Cache.IsEnabled(), MaxEntries: c.Cache.MaxEntries, MaxTTL: fmtDuration(c.Cache.MaxTTL)},
+		Filter:   Filter{BlockMode: c.Filter.BlockMode, UpdateInterval: fmtDuration(c.Filter.UpdateInterval), CNAMECheck: ptrBool(c.Filter.CNAMEEnabled())},
+		Cache: Cache{Enabled: c.Cache.IsEnabled(), MaxEntries: c.Cache.MaxEntries, MaxTTL: fmtDuration(c.Cache.MaxTTL),
+			ServeStale: ptrBool(c.Cache.ServeStaleEnabled()), StaleMax: fmtDuration(c.Cache.StaleMax), Prefetch: ptrBool(c.Cache.PrefetchEnabled())},
 		QueryLog: QueryLog{RetentionDays: c.Log.RetentionDays},
 	}
 }

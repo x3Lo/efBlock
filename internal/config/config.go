@@ -54,6 +54,27 @@ type Cache struct {
 	Enabled    *bool         `yaml:"enabled"`     // nil = activé par défaut
 	MaxEntries int           `yaml:"max_entries"` // nombre max de réponses gardées
 	MaxTTL     time.Duration `yaml:"max_ttl"`     // plafond de durée de vie d'une réponse
+
+	// ServeStale : servir une ancienne réponse quand aucun upstream ne répond (activé par défaut).
+	ServeStale *bool `yaml:"serve_stale"`
+	// StaleMax : jusqu'à quel âge une réponse périmée peut servir de secours (24h par défaut).
+	StaleMax time.Duration `yaml:"stale_max"`
+	// Prefetch : rafraîchir en avance les réponses populaires (activé par défaut).
+	Prefetch *bool `yaml:"prefetch"`
+}
+
+// ServeStaleEnabled indique si les réponses périmées servent de secours.
+func (c Cache) ServeStaleEnabled() bool { return c.ServeStale == nil || *c.ServeStale }
+
+// PrefetchEnabled indique si le préchargement est actif.
+func (c Cache) PrefetchEnabled() bool { return c.Prefetch == nil || *c.Prefetch }
+
+// StaleWindow retourne la durée de secours effective (0 si désactivé).
+func (c Cache) StaleWindow() time.Duration {
+	if !c.ServeStaleEnabled() {
+		return 0
+	}
+	return c.StaleMax
 }
 
 // IsEnabled indique si le cache est actif (oui, sauf "enabled: false").
@@ -67,7 +88,13 @@ type Filter struct {
 	Lists          []List        `yaml:"lists"`
 	Allowlist      []string      `yaml:"allowlist"` // domaines jamais bloqués
 	Blocklist      []string      `yaml:"blocklist"` // domaines toujours bloqués
+
+	// CNAMECheck : vérifier aussi les alias (CNAME) des réponses ("CNAME cloaking"). Activé par défaut.
+	CNAMECheck *bool `yaml:"cname_check"`
 }
+
+// CNAMEEnabled indique si les alias sont vérifiés (oui, sauf "cname_check: false").
+func (f Filter) CNAMEEnabled() bool { return f.CNAMECheck == nil || *f.CNAMECheck }
 
 // List est une liste de filtres : URL http(s) ou chemin de fichier local.
 type List struct {
@@ -163,6 +190,12 @@ func (c *Config) Finalize() error {
 	}
 	if c.Cache.MaxTTL == 0 {
 		c.Cache.MaxTTL = 24 * time.Hour
+	}
+	if c.Cache.StaleMax == 0 {
+		c.Cache.StaleMax = 24 * time.Hour
+	}
+	if c.Cache.StaleMax < 0 {
+		return fmt.Errorf("cache.stale_max: doit être positif")
 	}
 
 	if c.Log.Path == "" {

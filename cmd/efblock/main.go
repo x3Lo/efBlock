@@ -85,9 +85,8 @@ func main() {
 
 	// Le cache peut être remplacé à chaud (taille, durée) : on garde un pointeur partagé.
 	var liveCache atomic.Pointer[cache.Cache]
-	if cfg.Cache.IsEnabled() {
-		liveCache.Store(cache.New(cfg.Cache.MaxEntries, cfg.Cache.MaxTTL))
-	}
+	liveCache.Store(newCache(cfg))
+	engine.SetCNAMECheck(cfg.Filter.CNAMEEnabled())
 
 	// Journal des requêtes (SQLite). Close() à l'arrêt écrit les dernières lignes.
 	var qlog *querylog.Logger
@@ -189,14 +188,10 @@ func main() {
 		srv.SetLocal(newZone)
 		srv.SetAllowedClients(c.DNS.AllowedNets)
 		srv.SetNXDomain(c.Filter.BlockMode == "nxdomain")
-		if c.Cache.IsEnabled() {
-			nc := cache.New(c.Cache.MaxEntries, c.Cache.MaxTTL)
-			liveCache.Store(nc)
-			srv.SetCache(nc)
-		} else {
-			liveCache.Store(nil)
-			srv.SetCache(nil)
-		}
+		nc := newCache(c) // nil si le cache est désactivé
+		liveCache.Store(nc)
+		srv.SetCache(nc)
+		engine.SetCNAMECheck(c.Filter.CNAMEEnabled())
 		updater.SetInterval(c.Filter.UpdateInterval)
 		qlog.SetRetention(retention(c))
 		if webSrv != nil {
@@ -234,6 +229,17 @@ func buildDNS(c *config.Config) (*upstream.Forwarder, *localdns.Zone, error) {
 		return nil, nil, err
 	}
 	return fwd, zone, nil
+}
+
+// newCache construit le cache d'une configuration (nil s'il est désactivé).
+func newCache(c *config.Config) *cache.Cache {
+	if !c.Cache.IsEnabled() {
+		return nil
+	}
+	dc := cache.New(c.Cache.MaxEntries, c.Cache.MaxTTL)
+	dc.SetStale(c.Cache.StaleWindow())
+	dc.SetPrefetch(c.Cache.PrefetchEnabled())
+	return dc
 }
 
 // retention : durée de conservation du journal (0 = illimitée).

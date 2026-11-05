@@ -108,6 +108,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/blocklist", s.auth(s.handleDomains(store.Block)))
 	mux.HandleFunc("POST /api/blocklist", s.auth(s.handleAddDomain(store.Block)))
 	mux.HandleFunc("DELETE /api/blocklist", s.auth(s.handleRemoveDomain(store.Block)))
+	mux.HandleFunc("GET /api/groups", s.auth(s.handleGroups))
+	mux.HandleFunc("PUT /api/groups", s.auth(s.handleGroupsUpdate))
 	mux.HandleFunc("GET /api/lists", s.auth(s.handleLists))
 	mux.HandleFunc("POST /api/lists", s.auth(s.handleAddList))
 	mux.HandleFunc("DELETE /api/lists", s.auth(s.handleRemoveList))
