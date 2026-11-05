@@ -226,6 +226,10 @@ Le service redémarre tout seul en cas de plantage et au démarrage de la machin
 
 ## Interface web
 
+**Tester le blocage** : la page `http://IP_DE_LA_VM:8080/test.html` (lien « Test du blocage » dans le menu) essaie de joindre une vingtaine de
+domaines de publicité et de suivi, et des sites témoins. Ouvre-la sur plusieurs appareils pour comparer : derrière efBlock, les domaines
+sont « bloqués » ; sur un appareil qui n'utilise pas efBlock, ils sont « joignables ». Elle ne dépend d'aucun site tiers.
+
 - Adresse : `http://IP_DE_LA_VM:8080`.
 - Le mot de passe n'est jamais stocké en clair, seulement son hash bcrypt.
 - Seuls les réseaux de `web.allowed_cidrs` y accèdent (par défaut : les réseaux privés, jamais internet).

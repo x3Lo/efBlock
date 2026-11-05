@@ -403,3 +403,19 @@ func TestLiveStream(t *testing.T) {
 		}
 	}
 }
+
+// La page de test du blocage est un fichier statique : elle doit s'ouvrir sans connexion (pour
+// comparer plusieurs appareils), mais seulement depuis un réseau autorisé.
+func TestBlockTestPageIsPublicOnTheLANOnly(t *testing.T) {
+	e := newEnv(t)
+	rec := e.do("GET", "/test.html", "192.168.1.5:1234", nil, nil, false)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Test du blocage") {
+		t.Fatalf("/test.html depuis le LAN : %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "doubleclick") {
+		t.Error("la page doit contenir sa liste de domaines de test")
+	}
+	if rec := e.do("GET", "/test.html", "8.8.8.8:1234", nil, nil, false); rec.Code != http.StatusForbidden {
+		t.Errorf("/test.html depuis internet : %d, attendu 403", rec.Code)
+	}
+}

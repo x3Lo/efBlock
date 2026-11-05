@@ -31,12 +31,13 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   return <Shell onLogout={() => setState("out")}>{children}</Shell>;
 }
 
-const links = [
+const links: { href: string; label: string; external?: boolean }[] = [
   { href: "/", label: "Tableau de bord" },
   { href: "/queries/", label: "Journal" },
   { href: "/filters/", label: "Filtres" },
   { href: "/groups/", label: "Groupes" },
   { href: "/settings/", label: "Réglages" },
+  { href: "/test.html", label: "Test du blocage", external: true },
 ];
 
 function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: () => void }) {
@@ -56,7 +57,20 @@ function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: ()
       <aside className="flex shrink-0 flex-col gap-3 border-b bg-card px-3 py-3 md:min-h-screen md:w-52 md:border-r md:border-b-0 md:py-4">
         <div className="px-2 text-base font-semibold tracking-tight">efBlock</div>
         <nav aria-label="Navigation principale" className="flex gap-0.5 md:flex-col">
-          {links.map((l) => (
+          {links.map((l) =>
+            l.external ? (
+              // Page de test autonome (fichier statique) : elle s'ouvre dans un nouvel onglet,
+              // et la même adresse peut être ouverte sur d'autres appareils pour comparer.
+              <a
+                key={l.href}
+                href={l.href}
+                target="_blank"
+                rel="noopener"
+                className="rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {l.label}
+              </a>
+            ) : (
             <Link
               key={l.href}
               href={l.href}
@@ -68,7 +82,8 @@ function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: ()
             >
               {l.label}
             </Link>
-          ))}
+            ),
+          )}
         </nav>
         <div className="ml-auto md:mt-auto md:ml-0">
           <Button variant="ghost" size="sm" onClick={logout} className="text-muted-foreground">

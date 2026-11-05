@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test du blocage - efBlock</title>
+<style>
+  :root { --bg:#f8f6f1; --fg:#25221d; --muted:#6b665e; --card:#fdfcf9; --border:#ddd8cd; --blocked:#b75c1f; --ok:#2f7a4f; --warn:#9a7a1c; --bad:#a83a2a; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#171513; --fg:#ebe8e1; --muted:#9d978c; --card:#1e1c19; --border:#33302b; --blocked:#e08a4a; --ok:#6ec08f; --warn:#d8b955; --bad:#e07a68; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; letter-spacing: -.01em; }
+  p.lead { color: var(--muted); margin: 0 0 20px; }
+  .verdict { border: 1px solid var(--border); background: var(--card); padding: 14px 16px; margin-bottom: 16px; }
+  .verdict strong { display:block; font-size: 1.05rem; margin-bottom: 2px; }
+  .verdict .nums { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .verdict.good strong { color: var(--ok); } .verdict.partial strong { color: var(--warn); }
+  .verdict.none strong, .verdict.offline strong { color: var(--bad); }
+  button { font: inherit; padding: 7px 14px; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--fg); } button:disabled { opacity: .55; cursor: default; }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 22px 0 6px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 4px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  td.host { font: .85rem ui-monospace,"SF Mono",Menlo,Consolas,monospace; word-break: break-all; }
+  td.ms { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; width: 5.5em; }
+  td.res { width: 11em; font-weight: 600; white-space: nowrap; }
+  .blocked { color: var(--blocked); } .reach { color: var(--muted); } .witness-ok { color: var(--ok); } .witness-ko { color: var(--bad); } .pending { color: var(--muted); font-weight: 400; }
+  .note { color: var(--muted); font-size: .85rem; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Test du blocage</h1>
+  <p class="lead">Ouvre cette page sur chaque appareil à comparer. Elle essaie de joindre des domaines de publicité et de suivi : un bloqueur DNS les empêche de répondre.</p>
+
+  <div id="verdict" class="verdict" aria-live="polite"><strong>Test en cours…</strong><span class="nums">Cela prend quelques secondes.</span></div>
+  <button id="again" disabled>Relancer le test</button>
+
+  <h2>Publicités</h2>
+  <table id="ads"></table>
+  <h2>Suivi et mesure d'audience</h2>
+  <table id="trackers"></table>
+  <h2>Témoins (doivent rester joignables)</h2>
+  <table id="witness"></table>
+
+  <p class="note">
+    « Bloqué » veut dire que la connexion a échoué tout de suite : c'est ce que produit un DNS qui répond <code>0.0.0.0</code>. Une extension du navigateur
+    (uBlock, AdBlock...) donne le même résultat : pour tester efBlock seul, désactive-la. Certains domaines peuvent ne pas figurer dans tes listes de filtres.
+  </p>
+</main>
+
+<script>
+"use strict";
+const ADS = ["ad.doubleclick.net","pagead2.googlesyndication.com","googleadservices.com","securepubads.g.doubleclick.net","adservice.google.com","c.amazon-adsystem.com","ib.adnxs.com","static.criteo.net","ads.pubmatic.com","widgets.outbrain.com"];
+const TRACKERS = ["www.google-analytics.com","www.googletagmanager.com","stats.g.doubleclick.net","connect.facebook.net","static.hotjar.com","bat.bing.com","analytics.twitter.com","sb.scorecardresearch.com","api.mixpanel.com","cdn.segment.com"];
+const WITNESS = ["example.com","www.wikipedia.org","www.cloudflare.com"];
+
+const TIMEOUT_MS = 6000;  // au-delà : pas de réponse (ni bloqué net, ni joignable)
+const FAST_MS = 2500;     // un échec plus rapide que ça est un refus immédiat, donc un blocage
+
+// no-cors : on ne lit pas la réponse, on sait seulement si la connexion a abouti. Un domaine
+// bloqué par DNS (0.0.0.0) échoue tout de suite ; un domaine normal répond, même en erreur 404.
+async function probe(host) {
+  const t0 = performance.now();
+  try {
+    await fetch("https://" + host + "/?efblock-test=" + Date.now(), { mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(TIMEOUT_MS) });
+    return { state: "reach", ms: Math.round(performance.now() - t0) };
+  } catch (e) {
+    const ms = Math.round(performance.now() - t0);
+    return { state: ms < FAST_MS ? "blocked" : "silent", ms };
+  }
+}
+
+function addRows(tableId, hosts) {
+  const t = document.getElementById(tableId);
+  t.innerHTML = "";
+  return hosts.map(h => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = '<td class="host"></td><td class="res pending">en attente</td><td class="ms"></td>';
+    tr.cells[0].textContent = h;
+    t.appendChild(tr);
+    return tr;
+  });
+}
+
+function show(tr, r, witness) {
+  const res = tr.cells[1];
+  if (witness) {
+    res.className = "res " + (r.state === "reach" ? "witness-ok" : "witness-ko");
+    res.textContent = r.state === "reach" ? "joignable" : "injoignable";
+  } else {
+    res.className = "res " + (r.state === "blocked" ? "blocked" : "reach");
+    res.textContent = { blocked: "bloqué", reach: "joignable", silent: "sans réponse" }[r.state];
+  }
+  tr.cells[2].textContent = r.ms + " ms";
+}
+
+async function pool(jobs, limit) { // quelques requêtes à la fois : un navigateur n'aime pas 23 connexions neuves en parallèle
+  let i = 0;
+  await Promise.all(Array.from({ length: limit }, async () => { while (i < jobs.length) await jobs[i++](); }));
+}
+
+async function run() {
+  const btn = document.getElementById("again");
+  btn.disabled = true;
+  const v = document.getElementById("verdict");
+  v.className = "verdict";
+  v.innerHTML = "<strong>Test en cours…</strong><span class='nums'>Cela prend quelques secondes.</span>";
+
+  const rows = [...addRows("ads", ADS), ...addRows("trackers", TRACKERS)];
+  const wrows = addRows("witness", WITNESS);
+  const hosts = [...ADS, ...TRACKERS];
+  const results = new Array(hosts.length);
+  const wres = new Array(WITNESS.length);
+
+  await pool([
+    ...hosts.map((h, i) => async () => { results[i] = await probe(h); show(rows[i], results[i], false); }),
+    ...WITNESS.map((h, i) => async () => { wres[i] = await probe(h); show(wrows[i], wres[i], true); }),
+  ], 6);
+
+  const blocked = results.filter(r => r.state === "blocked").length;
+  const reachable = wres.filter(r => r.state === "reach").length;
+  const total = hosts.length;
+  const pct = Math.round(blocked * 100 / total);
+  let cls, title;
+  if (reachable < 2) { cls = "offline"; title = "Test non concluant : cet appareil ne joint pas les sites témoins (pas d'internet ?)."; }
+  else if (pct >= 70) { cls = "good"; title = "Le blocage est actif sur cet appareil."; }
+  else if (pct >= 20) { cls = "partial"; title = "Blocage partiel."; }
+  else { cls = "none"; title = "Aucun blocage détecté : cet appareil n'utilise sans doute pas efBlock."; }
+  v.className = "verdict " + cls;
+  v.innerHTML = "<strong></strong><span class='nums'></span>";
+  v.querySelector("strong").textContent = title;
+  v.querySelector(".nums").textContent = cls === "offline"
+    ? "Les sites témoins sont injoignables : les échecs ci-dessous ne prouvent rien."
+    : blocked + " domaines bloqués sur " + total + " (" + pct + " %) ; témoins joignables : " + reachable + " sur " + WITNESS.length + ".";
+  btn.disabled = false;
+}
+
+document.getElementById("again").addEventListener("click", run);
+run();
+</script>
+</body>
+</html>
