@@ -10,3 +10,4 @@ node_modules/
 /web-ui/.next/
 /web-ui/out/
 /dist/
+*.tsbuildinfo
