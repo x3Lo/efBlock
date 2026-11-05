@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -319,5 +320,31 @@ func TestGenSelfSigned(t *testing.T) {
 	_ = pair
 	if _, _, err := genSelfSigned(t.TempDir(), nil, nil, time.Hour); err == nil {
 		t.Error("sans adresse ni nom, le certificat n'a aucun intérêt : erreur attendue")
+	}
+}
+
+func TestConfirmOuiNon(t *testing.T) {
+	cases := []struct {
+		in   string
+		fn   func(*UI, string) bool
+		want bool
+	}{
+		{"oui\n", (*UI).confirm, true},
+		{"\n", (*UI).confirm, false},
+		{"peut-etre\nnon\n", (*UI).confirm, false},
+		{"bof\no\n", (*UI).confirm, true},
+		{"\n", (*UI).confirmYes, true},
+		{"non\n", (*UI).confirmYes, false},
+		{"", (*UI).confirmYes, false},
+	}
+	for _, c := range cases {
+		out, err := os.CreateTemp(t.TempDir(), "out")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ui := &UI{in: bufio.NewReader(strings.NewReader(c.in)), out: out}
+		if got := c.fn(ui, "Question ?"); got != c.want {
+			t.Errorf("entrée %q : %v, attendu %v", c.in, got, c.want)
+		}
 	}
 }
