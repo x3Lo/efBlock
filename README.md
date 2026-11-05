@@ -404,3 +404,8 @@ Le workflow `.github/workflows/release.yml` teste, construit les paquets (amd64 
 leur `SHA256SUMS`. C'est ce fichier que `efblock-console -update` utilise pour vérifier une mise à jour.
 
 L'ISO se construit à partir de l'ISO « netinst » officielle de Debian, vérifiée par son empreinte (`image/build.sh`).
+
+## Licence
+
+[MIT](LICENSE) : tu peux utiliser, modifier et redistribuer efBlock, y compris dans un produit commercial, à condition de garder la mention
+de copyright. Le logiciel est fourni sans garantie.

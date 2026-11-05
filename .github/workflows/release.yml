@@ -45,8 +45,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Une version 0.x est une pré-version : l'ISO n'a pas encore été éprouvée sur beaucoup de machines.
+          flags=""
+          if [[ "${{ steps.v.outputs.version }}" == 0.* ]]; then flags="--prerelease"; fi
           gh release create "$GITHUB_REF_NAME" dist/efblock_*.deb dist/efblock-*.iso dist/SHA256SUMS \
-            --title "efBlock $GITHUB_REF_NAME" --generate-notes
+            --title "efBlock $GITHUB_REF_NAME" --generate-notes $flags
       - name: Garder les fichiers (lancement manuel)
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4

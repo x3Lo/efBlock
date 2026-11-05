@@ -34,9 +34,16 @@ install -m 0644 packaging/efblock-console.service "$ROOT/lib/systemd/system/efbl
 install -m 0640 packaging/config.default.yaml "$ROOT/etc/efblock/config.yaml"
 install -m 0644 README.md "$ROOT/usr/share/doc/efblock/README.md"
 cat >"$ROOT/usr/share/doc/efblock/copyright" <<COPY
-efBlock : bloqueur de publicités DNS.
-Source et licence : https://github.com/x3Lo/efBlock
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: efBlock
+Source: https://github.com/x3Lo/efBlock
+
+Files: *
+Copyright: 2026 x3Lo
+License: MIT
+ Le texte complet de la licence MIT est dans /usr/share/doc/efblock/LICENSE.
 COPY
+install -m 0644 LICENSE "$ROOT/usr/share/doc/efblock/LICENSE"
 
 install -m 0755 packaging/postinst packaging/prerm packaging/postrm "$ROOT/DEBIAN/"
 echo "/etc/efblock/config.yaml" >"$ROOT/DEBIAN/conffiles" # jamais écrasé par une mise à jour
