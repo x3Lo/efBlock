@@ -94,11 +94,41 @@ func (u *UI) ask(prompt, def string) (string, bool) {
 	return line, true
 }
 
-// confirm demande o/N ; non par défaut.
+// confirm pose une question fermée et répète tant que la réponse n'est pas
+// « oui » ou « non » (Entrée seule = non). Retourne false si l'entrée est fermée.
 func (u *UI) confirm(prompt string) bool {
-	a, _ := u.ask(prompt+" (o/N)", "")
-	a = strings.ToLower(a)
-	return a == "o" || a == "oui" || a == "y" || a == "yes"
+	for {
+		u.printf("%s (oui/non) [non] : ", prompt)
+		line, err := u.in.ReadString('\n')
+		if err != nil && line == "" {
+			return false
+		}
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "", "n", "non", "no":
+			return false
+		case "o", "oui", "y", "yes":
+			return true
+		}
+		u.printf("Réponds par oui ou par non.\n")
+	}
+}
+
+// confirmYes est comme confirm, mais Entrée seule = oui.
+func (u *UI) confirmYes(prompt string) bool {
+	for {
+		u.printf("%s (oui/non) [oui] : ", prompt)
+		line, err := u.in.ReadString('\n')
+		if err != nil && line == "" {
+			return false
+		}
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "", "o", "oui", "y", "yes":
+			return true
+		case "n", "non", "no":
+			return false
+		}
+		u.printf("Réponds par oui ou par non.\n")
+	}
 }
 
 func (u *UI) pause() {
@@ -280,31 +310,30 @@ func actionNetwork(ui *UI) {
 		ui.pause()
 		return
 	}
+	chosen := -1
 	for n, i := range ifs {
 		addrs := strings.Join(i.Addrs, ", ")
 		if addrs == "" {
 			addrs = "pas d'adresse"
 		}
-		ui.printf("  %d) %s   %s\n", n+1, i.Name, addrs)
+		ui.printf("Carte %s   %s\n", i.Name, addrs)
+		if len(ifs) == 1 || ui.confirm("Configurer cette carte ?") {
+			chosen = n
+			break
+		}
+		ui.printf("\n")
 	}
-	sel, ok := ui.ask("\nCarte à configurer (numéro)", "1")
-	if !ok {
+	if chosen < 0 {
 		return
 	}
-	idx, err := strconv.Atoi(sel)
-	if err != nil || idx < 1 || idx > len(ifs) {
-		ui.printf("Choix invalide.\n")
-		ui.pause()
-		return
-	}
-	cfg := NetConfig{Iface: ifs[idx-1].Name}
+	cfg := NetConfig{Iface: ifs[chosen].Name}
 
-	mode, _ := ui.ask("Mode : 1) DHCP (automatique)  2) adresse fixe", "2")
-	if mode == "1" {
+	ui.printf("\n")
+	if ui.confirmYes("Obtenir l'adresse automatiquement (DHCP) ?") {
 		cfg.DHCP = true
 	} else {
 		def := ""
-		if a := ifs[idx-1].Addrs; len(a) > 0 {
+		if a := ifs[chosen].Addrs; len(a) > 0 {
 			def = a[0]
 		}
 		cfg.Address, _ = ui.ask("Adresse et masque (ex: 192.168.1.10/24)", def)
@@ -320,7 +349,7 @@ func actionNetwork(ui *UI) {
 	}
 	ui.printf("\nÀ appliquer :\n%s\n", unit)
 	ui.printf("Si tu es connecté en SSH, la connexion va se couper.\n")
-	if !ui.confirm("Appliquer ?") {
+	if !ui.confirm("Appliquer cette configuration ?") {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(networkdFile), 0o755); err == nil {
@@ -344,6 +373,7 @@ func actionPassword(ui *UI) {
 	ui.clear()
 	ui.printf("Mot de passe de l'interface web\n-------------------------------\n\n8 caractères au moins.\n\n")
 	cmd := exec.Command(efblockBin, "-set-password", "-config", configPath)
+	cmd.Dir = serviceDir // "./data" doit se résoudre comme pour le service
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		ui.printf("\nMot de passe non modifié.\n")
@@ -370,40 +400,42 @@ func actionInfra(ui *UI) {
 		https = "oui"
 	}
 	ui.printf("  HTTPS                : %s\n\n", https)
-	ui.printf("  1) Changer l'écoute DNS\n  2) Changer l'écoute de l'interface web\n  3) Activer HTTPS (certificat auto-signé)\n  4) Désactiver HTTPS\n  5) Revenir aux valeurs de config.yaml\n  0) Retour\n\n")
-	choice, _ := ui.ask("Choix", "0")
-
 	cur := mgr.InfraOverrides()
 	cur.DNSListen, cur.WebListen, cur.TLSCert, cur.TLSKey = cfg.DNS.Listen, cfg.Web.Listen, cfg.Web.TLSCert, cfg.Web.TLSKey
 	changed := false
-	switch choice {
-	case "1":
-		v, _ := ui.ask("Écoute DNS (ex: :53 ou 192.168.1.10:53)", cfg.DNS.Listen)
-		cur.DNSListen, changed = v, true
-	case "2":
-		v, _ := ui.ask("Écoute de l'interface web (ex: :8080)", cfg.Web.Listen)
-		cur.WebListen, changed = v, true
-	case "3":
-		var ips []net.IP
-		for _, i := range listIfaces() {
-			for _, a := range i.Addrs {
-				if ip, _, err := net.ParseCIDR(a); err == nil {
-					ips = append(ips, ip)
+
+	if ui.confirm("Changer l'écoute DNS ?") {
+		cur.DNSListen, _ = ui.ask("Écoute DNS (ex: :53 ou 192.168.1.10:53)", cfg.DNS.Listen)
+		changed = true
+	}
+	if ui.confirm("Changer l'écoute de l'interface web ?") {
+		cur.WebListen, _ = ui.ask("Écoute de l'interface web (ex: :8080)", cfg.Web.Listen)
+		changed = true
+	}
+	if cfg.Web.TLSCert == "" {
+		if ui.confirm("Activer HTTPS (certificat auto-signé) ?") {
+			var ips []net.IP
+			for _, i := range listIfaces() {
+				for _, a := range i.Addrs {
+					if ip, _, err := net.ParseCIDR(a); err == nil {
+						ips = append(ips, ip)
+					}
 				}
 			}
+			host, _ := os.Hostname()
+			cert, key, err := genSelfSigned(certDir, ips, []string{host}, 10*365*24*time.Hour)
+			if err != nil {
+				ui.printf("\nCertificat impossible : %v\n", err)
+				ui.pause()
+				return
+			}
+			cur.TLSCert, cur.TLSKey, changed = cert, key, true
+			ui.printf("Certificat créé (valable 10 ans). Ton navigateur affichera un avertissement la première fois : c'est normal, le certificat est le tien.\n")
 		}
-		host, _ := os.Hostname()
-		cert, key, err := genSelfSigned(certDir, ips, []string{host}, 10*365*24*time.Hour)
-		if err != nil {
-			ui.printf("\nCertificat impossible : %v\n", err)
-			ui.pause()
-			return
-		}
-		cur.TLSCert, cur.TLSKey, changed = cert, key, true
-		ui.printf("\nCertificat créé (valable 10 ans). Ton navigateur affichera un avertissement la première fois : c'est normal, le certificat est le tien.\n")
-	case "4":
+	} else if ui.confirm("Désactiver HTTPS ?") {
 		cur.TLSCert, cur.TLSKey, changed = "", "", true
-	case "5":
+	}
+	if !changed && ui.confirm("Revenir aux valeurs de config.yaml ?") {
 		if err := mgr.ClearInfra(); err != nil {
 			ui.printf("\nErreur : %v\n", err)
 		} else {
@@ -415,8 +447,6 @@ func actionInfra(ui *UI) {
 		}
 		ui.pause()
 		return
-	default:
-		return
 	}
 	if changed {
 		// SetInfra remplace tout le groupe : on réécrit donc aussi les valeurs inchangées.
@@ -427,7 +457,7 @@ func actionInfra(ui *UI) {
 		}
 		fixOwnership(filepath.Join(dataDir(cfg), "settings.json"))
 		ui.printf("\nEnregistré. Il faut redémarrer le service pour l'appliquer.\n")
-		if ui.confirm("Redémarrer maintenant ?") {
+		if ui.confirmYes("Redémarrer le service maintenant ?") {
 			restartService(ui)
 		}
 	}
@@ -458,7 +488,9 @@ func actionShell(ui *UI) {
 		}
 	}
 	ui.printf("Connecte-toi avec le compte root. Tape « exit » pour revenir au menu.\n\n")
-	cmd := exec.Command("login", "root")
+	// setsid -c : « login » doit être le propriétaire de l'écran (chef de session) pour
+	// afficher son invite ; lancé en simple processus fils, il restait muet.
+	cmd := exec.Command("setsid", "-c", "login", "-p", "root")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	_ = cmd.Run()
 }
