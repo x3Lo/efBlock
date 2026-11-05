@@ -63,7 +63,11 @@ Une image qui installe un Debian minimal avec efBlock déjà en place, sur le mo
    - **Installer efBlock (EFFACE LE PREMIER DISQUE)** : installation automatique, sans aucune question. Elle choisit le premier
      disque interne, **jamais la clé USB** sur laquelle tu as démarré.
    - **Installation guidée** : mêmes réglages, mais tu choisis le disque.
+   - Les mêmes entrées existent en version **+ serveur SSH**, pour administrer la machine depuis un autre poste. Le compte `root`
+     n'a pas de mot de passe au départ : choisis-le avec l'option 7 de la console, puis `ssh root@<adresse>`. Pense à retirer
+     cette autorisation (`/etc/ssh/sshd_config.d/efblock.conf`) en production.
 
+   Pendant l'installation, Debian te demande la langue, le pays et le clavier (Français, France, AZERTY pour un clavier français).
    Rien n'est effacé tant que tu n'as pas choisi une entrée : le menu attend.
 3. La machine redémarre. Un **menu s'affiche sur son écran** : il indique l'adresse de l'interface web, et te propose de régler le
    réseau (DHCP ou adresse fixe) et de **choisir le mot de passe** (option 2). C'est tout.
