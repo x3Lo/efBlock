@@ -46,6 +46,24 @@ jobs:
           packaging/build-deb.sh "${{ steps.v.outputs.version }}" arm64
       - name: ISO d'installation
         run: image/build.sh "${{ steps.v.outputs.version }}"
+      - name: Contrôle de l'ISO (démarrage et contenu)
+        run: |
+          iso="$(ls dist/efblock-*.iso)"
+          report="$(xorriso -indev "$iso" -report_el_torito plain -report_system_area plain 2>&1 || true)"
+          files="$(xorriso -indev "$iso" -find /efblock -type f 2>/dev/null | tr -d "'" | sort)"
+          # %0A = retour à la ligne dans une annotation : le rapport reste lisible dans la page de l'exécution.
+          esc() { sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g'; }
+          boot="$(printf '%s\n' "$report" | grep -E 'El Torito|System area|GPT|MBR' | head -25 | esc)"
+          list="$(printf '%s\n' "$files" | esc)"
+          echo "::notice title=Contenu de l'ISO::Taille : $(du -h "$iso" | cut -f1)%0A%0A${boot}%0A%0AFichiers efBlock :%0A${list}"
+          ok=1
+          printf '%s' "$report" | grep -Ei 'El Torito boot img.*BIOS' >/dev/null || { echo "::error::pas d'entrée de démarrage BIOS dans l'ISO"; ok=0; }
+          printf '%s' "$report" | grep -Ei 'El Torito boot img.*UEFI' >/dev/null || { echo "::error::pas d'entrée de démarrage UEFI dans l'ISO"; ok=0; }
+          for f in preseed-auto.cfg preseed-guided.cfg late.sh; do
+            printf '%s' "$files" | grep -q "/efblock/$f" || { echo "::error::$f absent de l'ISO"; ok=0; }
+          done
+          printf '%s' "$files" | grep -Eq '/efblock/efblock_.*_amd64\.deb' || { echo "::error::paquet efBlock absent de l'ISO"; ok=0; }
+          [ "$ok" = 1 ]
       - name: Empreintes
         run: cd dist && sha256sum efblock_*.deb efblock-*.iso > SHA256SUMS && cat SHA256SUMS
       - name: Publier la version
