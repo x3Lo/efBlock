@@ -475,7 +475,7 @@ func runUpdate(ui *UI, assumeYes bool) error {
 	client := &http.Client{Timeout: 5 * time.Minute}
 
 	ui.printf("Recherche de la dernière version…\n")
-	rel, err := latestRelease(ctx, client, api)
+	rel, err := latestRelease(ctx, client, api, acceptsPrereleases(version))
 	if err != nil {
 		return fmt.Errorf("impossible de joindre GitHub : %w", err)
 	}
