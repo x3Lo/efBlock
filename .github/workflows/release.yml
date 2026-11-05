@@ -23,6 +23,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Le tag doit être sur main (production)
+        if: github.ref_type == 'tag'
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Le tag $GITHUB_REF_NAME n'est pas sur main : on ne publie que ce qui est en production. Fusionne dev dans main d'abord."
+            exit 1
+          fi
       - name: Outils
         run: sudo apt-get update && sudo apt-get install -y xorriso
       - name: Tests
@@ -48,8 +56,14 @@ jobs:
           # Une version 0.x est une pré-version : l'ISO n'a pas encore été éprouvée sur beaucoup de machines.
           flags=""
           if [[ "${{ steps.v.outputs.version }}" == 0.* ]]; then flags="--prerelease"; fi
-          gh release create "$GITHUB_REF_NAME" dist/efblock_*.deb dist/efblock-*.iso dist/SHA256SUMS \
-            --title "efBlock $GITHUB_REF_NAME" --generate-notes $flags
+          files="dist/efblock_*.deb dist/efblock-*.iso dist/SHA256SUMS"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # La version a déjà été créée à la main sur GitHub : on y ajoute les fichiers.
+            gh release upload "$GITHUB_REF_NAME" $files --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" $files \
+              --title "efBlock $GITHUB_REF_NAME" --generate-notes $flags
+          fi
       - name: Garder les fichiers (lancement manuel)
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4

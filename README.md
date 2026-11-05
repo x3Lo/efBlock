@@ -364,6 +364,8 @@ port **53** (et non 5353) ; Windows teste sa connexion via le DNS.
 
 ## Développement
 
+Le flux de travail (branches `main` = production, `dev` = préproduction, une branche par tâche) est décrit dans [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ```bash
 make test        # go test -race ./...
 make build       # compile le binaire
