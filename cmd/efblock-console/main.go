@@ -487,7 +487,9 @@ func actionShell(ui *UI) {
 		}
 	}
 	ui.printf("Connecte-toi avec le compte root. Tape « exit » pour revenir au menu.\n\n")
-	cmd := exec.Command("login", "root")
+	// setsid -c : « login » doit être le propriétaire de l'écran (chef de session) pour
+	// afficher son invite ; lancé en simple processus fils, il restait muet.
+	cmd := exec.Command("setsid", "-c", "login", "-p", "root")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	_ = cmd.Run()
 }
