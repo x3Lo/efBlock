@@ -373,6 +373,7 @@ func actionPassword(ui *UI) {
 	ui.clear()
 	ui.printf("Mot de passe de l'interface web\n-------------------------------\n\n8 caractères au moins.\n\n")
 	cmd := exec.Command(efblockBin, "-set-password", "-config", configPath)
+	cmd.Dir = serviceDir // "./data" doit se résoudre comme pour le service
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		ui.printf("\nMot de passe non modifié.\n")
