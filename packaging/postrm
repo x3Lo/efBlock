@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+case "$1" in
+remove)
+	[ -d /run/systemd/system ] && systemctl daemon-reload || true
+	;;
+purge)
+	# "purge" est une demande explicite de tout effacer : données, configuration, compte.
+	rm -rf /var/lib/efblock /etc/efblock
+	if getent passwd efblock >/dev/null; then
+		userdel efblock 2>/dev/null || true
+	fi
+	[ -d /run/systemd/system ] && systemctl daemon-reload || true
+	;;
+esac
+exit 0

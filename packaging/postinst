@@ -1,0 +1,36 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+configure)
+	# Compte système dédié : sans shell, sans dossier personnel.
+	if ! getent passwd efblock >/dev/null; then
+		useradd --system --user-group --no-create-home --home-dir /var/lib/efblock --shell /usr/sbin/nologin efblock
+	fi
+	install -d -o efblock -g efblock -m 0750 /var/lib/efblock
+	chown root:efblock /etc/efblock
+	chmod 0750 /etc/efblock
+	chown root:efblock /etc/efblock/config.yaml
+	chmod 0640 /etc/efblock/config.yaml
+
+	# Migration depuis l'ancien script deploy/install.sh (binaire dans /usr/local/bin, service dans /etc) :
+	# sans ça, l'ancien service resterait prioritaire et lancerait l'ancien binaire.
+	if [ -f /etc/systemd/system/efblock.service ] && grep -q /usr/local/bin/efblock /etc/systemd/system/efblock.service; then
+		rm -f /etc/systemd/system/efblock.service /usr/local/bin/efblock
+	fi
+
+	# Pas de systemd en marche (construction d'une image, chroot) : on s'arrête là,
+	# le service sera activé par l'image elle-même.
+	if [ -d /run/systemd/system ]; then
+		systemctl daemon-reload || true
+		systemctl enable efblock >/dev/null 2>&1 || true
+		if [ -n "$2" ]; then
+			systemctl try-restart efblock || true # mise à jour : on relance le service
+		else
+			systemctl start efblock || true
+		fi
+	fi
+	;;
+esac
+
+exit 0

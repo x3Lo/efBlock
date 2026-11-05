@@ -1,0 +1,30 @@
+# efBlock : configuration par défaut du paquet.
+#
+# Presque tout se règle SANS ouvrir ce fichier :
+#   - depuis l'interface web (page "Réglages", "Groupes", "Filtres") ;
+#   - depuis le menu de la console de la machine (réseau, mot de passe, HTTPS, mise à jour).
+# Ce fichier ne sert qu'aux valeurs de départ. Il n'est jamais écrasé par une mise à jour.
+
+dns:
+  listen: ":53"
+  upstreams:
+    - "tls://1.1.1.1"
+    - "tls://9.9.9.9"
+    - "https://cloudflare-dns.com/dns-query"
+  bootstrap: ["1.1.1.1:53", "9.9.9.9:53"]
+  timeout: 3s
+
+filter:
+  data_dir: "./data"
+  block_mode: zero_ip
+  update_interval: 24h
+  lists:
+    - name: StevenBlack
+      url: https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+    - name: OISD small
+      url: https://small.oisd.nl/
+
+web:
+  # L'interface web reste désactivée tant qu'aucun mot de passe n'est défini
+  # (menu de la console, option 2).
+  listen: ":8080"

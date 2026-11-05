@@ -16,6 +16,10 @@ jobs:
           go-version-file: go.mod
       - name: Formatage
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: Scripts (syntaxe)
+        run: |
+          for f in deploy/install.sh packaging/build-deb.sh packaging/postinst packaging/prerm packaging/postrm image/build.sh; do bash -n "$f"; done
+          sh -n image/files/late.sh
       - run: go vet ./...
       - run: go test -race ./...
       - name: Compilation (binaire Linux amd64 et arm64)

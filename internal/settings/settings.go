@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -80,15 +81,26 @@ type QueryLog struct {
 	RetentionDays int `json:"retention_days"`
 }
 
+// InfraSettings : adresses d'écoute et HTTPS. Ces réglages ne se changent PAS depuis
+// l'interface web (une faute d'adresse te couperait l'accès à l'interface elle-même) :
+// seulement depuis la console de la machine, qui reste toujours disponible pour réparer.
+type InfraSettings struct {
+	DNSListen string `json:"dns_listen,omitempty"` // ex ":53" ou "192.168.1.10:53"
+	WebListen string `json:"web_listen,omitempty"` // ex ":8080"
+	TLSCert   string `json:"tls_cert,omitempty"`   // chemin du certificat ; avec TLSKey, active HTTPS
+	TLSKey    string `json:"tls_key,omitempty"`
+}
+
 // Overrides : ce qui a été modifié depuis l'interface (nil = non modifié).
 type Overrides struct {
-	Upstream     *Upstream `json:"upstream,omitempty"`
-	Access       *Access   `json:"access,omitempty"`
-	Local        *Local    `json:"local,omitempty"`
-	Filter       *Filter   `json:"filter,omitempty"`
-	Cache        *Cache    `json:"cache,omitempty"`
-	QueryLog     *QueryLog `json:"querylog,omitempty"`
-	PasswordHash string    `json:"password_hash,omitempty"`
+	Infra        *InfraSettings `json:"infra,omitempty"`
+	Upstream     *Upstream      `json:"upstream,omitempty"`
+	Access       *Access        `json:"access,omitempty"`
+	Local        *Local         `json:"local,omitempty"`
+	Filter       *Filter        `json:"filter,omitempty"`
+	Cache        *Cache         `json:"cache,omitempty"`
+	QueryLog     *QueryLog      `json:"querylog,omitempty"`
+	PasswordHash string         `json:"password_hash,omitempty"`
 }
 
 // Groups : toutes les valeurs actuelles, groupe par groupe.
@@ -230,6 +242,17 @@ func (m *Manager) build(ov Overrides) (*config.Config, error) {
 	if ov.PasswordHash != "" {
 		c.Web.PasswordHash = ov.PasswordHash
 	}
+	if g := ov.Infra; g != nil {
+		if g.DNSListen != "" {
+			c.DNS.Listen = g.DNSListen
+		}
+		if g.WebListen != "" {
+			c.Web.Listen = g.WebListen
+		}
+		if g.TLSCert != "" || g.TLSKey != "" {
+			c.Web.TLSCert, c.Web.TLSKey = g.TLSCert, g.TLSKey
+		}
+	}
 	// Les listes calculées par Finalize doivent être recalculées à partir des nouvelles valeurs.
 	c.DNS.AllowedNets, c.Web.AllowedNets = nil, nil
 	if err := c.Finalize(); err != nil {
@@ -338,6 +361,46 @@ func (m *Manager) Reset(group string) error {
 	return m.commit(ov)
 }
 
+// SetInfra enregistre les adresses d'écoute et le HTTPS (utilisé par la console, jamais par l'API web).
+// Les adresses sont validées ; le changement ne prend effet qu'au prochain démarrage.
+func (m *Manager) SetInfra(g InfraSettings) error {
+	for field, addr := range map[string]string{"dns_listen": g.DNSListen, "web_listen": g.WebListen} {
+		if addr == "" {
+			continue
+		}
+		if _, port, err := net.SplitHostPort(addr); err != nil || port == "" {
+			return fmt.Errorf("%w: %s %q invalide (attendu ex: :53 ou 192.168.1.10:53)", ErrInvalid, field, addr)
+		}
+	}
+	if (g.TLSCert == "") != (g.TLSKey == "") {
+		return fmt.Errorf("%w: le certificat et la clé HTTPS vont ensemble", ErrInvalid)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ov := m.ov
+	ov.Infra = &g
+	return m.commit(ov)
+}
+
+// InfraOverrides retourne les adresses d'écoute et le HTTPS enregistrés (vide si aucun).
+func (m *Manager) InfraOverrides() InfraSettings {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ov.Infra == nil {
+		return InfraSettings{}
+	}
+	return *m.ov.Infra
+}
+
+// ClearInfra supprime les réglages d'adresses et de HTTPS : retour aux valeurs de config.yaml.
+func (m *Manager) ClearInfra() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ov := m.ov
+	ov.Infra = nil
+	return m.commit(ov)
+}
+
 // SetPasswordHash enregistre un nouveau mot de passe (hash bcrypt) et l'applique.
 func (m *Manager) SetPasswordHash(hash string) error {
 	m.mu.Lock()
@@ -395,8 +458,8 @@ func (m *Manager) View() View {
 	add(GroupCache, m.ov.Cache != nil)
 	add(GroupQueryLog, m.ov.QueryLog != nil)
 	v.Infra = Infra{
-		DNSListen: m.base.DNS.Listen, WebListen: m.base.Web.Listen, HTTPS: m.base.Web.TLSCert != "",
-		DataDir: m.base.Filter.DataDir, QueryLogEnabled: m.base.Log.IsEnabled(),
+		DNSListen: m.eff.DNS.Listen, WebListen: m.eff.Web.Listen, HTTPS: m.eff.Web.TLSCert != "",
+		DataDir: m.eff.Filter.DataDir, QueryLogEnabled: m.eff.Log.IsEnabled(),
 	}
 	return v
 }

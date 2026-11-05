@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -29,14 +31,26 @@ import (
 	"github.com/x3Lo/efBlock/internal/web"
 )
 
+// version est renseignée à la compilation (-ldflags "-X main.version=1.2.3").
+var version = "dev"
+
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "chemin du fichier de configuration")
 	debug := flag.Bool("debug", false, "logs détaillés (une ligne par requête)")
 	hashPw := flag.Bool("hash-password", false, "demande un mot de passe et affiche son hash pour config.yaml")
+	setPw := flag.Bool("set-password", false, "demande un mot de passe et l'enregistre comme mot de passe de l'interface web")
+	showVersion := flag.Bool("version", false, "affiche la version et quitte")
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Println("efblock", version)
+		return
+	}
 	if *hashPw {
 		os.Exit(hashPassword())
+	}
+	if *setPw {
+		os.Exit(setWebPassword(*cfgPath))
 	}
 
 	level := slog.LevelInfo
@@ -250,9 +264,9 @@ func retention(c *config.Config) time.Duration {
 	return time.Duration(c.Log.RetentionDays) * 24 * time.Hour
 }
 
-// hashPassword lit un mot de passe au clavier (sans l'afficher) et imprime son
-// hash bcrypt, à coller dans config.yaml. On ne stocke JAMAIS le mot de passe lui-même.
-func hashPassword() int {
+// readNewPassword demande un mot de passe (sans l'afficher) et retourne son hash bcrypt.
+// Sur un terminal, il demande une confirmation ; si l'entrée est redirigée (script), il lit une ligne.
+func readNewPassword() (string, error) {
 	read := func(prompt string) (string, error) {
 		fmt.Fprint(os.Stderr, prompt)
 		if term.IsTerminal(int(os.Stdin.Fd())) {
@@ -260,26 +274,74 @@ func hashPassword() int {
 			fmt.Fprintln(os.Stderr)
 			return string(b), err
 		}
-		var line string // entrée redirigée (script) : on lit une ligne
+		var line string
 		_, err := fmt.Fscanln(os.Stdin, &line)
 		return line, err
 	}
 	pw, err := read("Mot de passe : ")
 	if err != nil || len(pw) < 8 {
-		fmt.Fprintln(os.Stderr, "erreur : mot de passe vide ou de moins de 8 caractères")
-		return 1
+		return "", errors.New("mot de passe vide ou de moins de 8 caractères")
 	}
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		if again, _ := read("Confirmation : "); again != pw {
-			fmt.Fprintln(os.Stderr, "erreur : les deux saisies diffèrent")
-			return 1
+			return "", errors.New("les deux saisies diffèrent")
 		}
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 	if err != nil { // bcrypt refuse les mots de passe de plus de 72 octets
+		return "", err
+	}
+	return string(hash), nil
+}
+
+// hashPassword affiche le hash bcrypt d'un mot de passe, à coller dans config.yaml.
+// On ne stocke JAMAIS le mot de passe lui-même.
+func hashPassword() int {
+	hash, err := readNewPassword()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "erreur :", err)
 		return 1
 	}
-	fmt.Println(string(hash))
+	fmt.Println(hash)
+	return 0
+}
+
+// setWebPassword enregistre le mot de passe de l'interface web dans settings.json
+// (le même fichier que la page Réglages) : pratique pour le premier démarrage d'un
+// système tout installé, où personne n'a encore de mot de passe.
+func setWebPassword(cfgPath string) int {
+	base, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "erreur : config :", err)
+		return 1
+	}
+	hash, err := readNewPassword()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "erreur :", err)
+		return 1
+	}
+	path := filepath.Join(base.Filter.DataDir, "settings.json")
+	if err := os.MkdirAll(base.Filter.DataDir, 0o750); err != nil {
+		fmt.Fprintln(os.Stderr, "erreur :", err)
+		return 1
+	}
+	mgr, err := settings.Open(path, base)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "erreur :", err)
+		return 1
+	}
+	if err := mgr.SetPasswordHash(hash); err != nil {
+		fmt.Fprintln(os.Stderr, "erreur :", err)
+		return 1
+	}
+	// Lancé en root, on rend le fichier au compte du service : sinon efBlock, qui tourne
+	// sans droits, ne pourrait plus le modifier depuis la page Réglages.
+	if u, err := user.Lookup("efblock"); err == nil && os.Geteuid() == 0 {
+		uid, _ := strconv.Atoi(u.Uid)
+		gid, _ := strconv.Atoi(u.Gid)
+		_ = os.Chown(path, uid, gid)
+		_ = os.Chown(base.Filter.DataDir, uid, gid)
+	}
+	fmt.Fprintln(os.Stderr, "Mot de passe de l'interface web enregistré. Redémarre le service pour l'activer : systemctl restart efblock")
 	return 0
 }

@@ -413,8 +413,9 @@ function InfraSection({ view }: { view: SettingsView }) {
     <section className="max-w-2xl border-t pt-5">
       <h2 className="mb-1 text-sm font-semibold">Infrastructure</h2>
       <p className="mb-3 text-muted-foreground">
-        Ces réglages se changent seulement dans <code>/etc/efblock/config.yaml</code>, puis un redémarrage : une erreur
-        d&apos;adresse d&apos;écoute te couperait l&apos;accès à cette interface, il vaut mieux pouvoir la réparer depuis un terminal.
+        Ces réglages se changent depuis la <strong>console de la machine</strong> (menu « Adresses d&apos;écoute et HTTPS »), pas depuis cette
+        interface : une erreur d&apos;adresse te couperait l&apos;accès à cette page, alors que la console permet toujours de la réparer. Ils
+        peuvent aussi être fixés dans <code>/etc/efblock/config.yaml</code>.
       </p>
       <dl className="mb-4 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5">
         {rows.map(([k, v]) => (

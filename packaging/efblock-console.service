@@ -1,0 +1,20 @@
+[Unit]
+Description=Console d'administration efBlock (écran de la machine)
+After=systemd-user-sessions.service efblock.service
+# Prend la place de la console de connexion habituelle sur le premier écran.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+ExecStart=/usr/bin/efblock-console
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

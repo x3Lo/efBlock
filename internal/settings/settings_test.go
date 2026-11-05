@@ -248,3 +248,44 @@ func TestOldSettingsFileStillLoads(t *testing.T) {
 		t.Error("un ancien fichier valide ne doit pas être mis de côté")
 	}
 }
+
+func TestInfraSettingsOverrideAndAreNotEditableFromTheWeb(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.json")
+	m, _ := Open(path, baseConfig(t))
+	if err := m.SetInfra(InfraSettings{DNSListen: "192.168.1.10:53", WebListen: ":9090", TLSCert: "/c.pem", TLSKey: "/k.pem"}); err != nil {
+		t.Fatal(err)
+	}
+	e := m.Effective()
+	if e.DNS.Listen != "192.168.1.10:53" || e.Web.Listen != ":9090" || e.Web.TLSCert != "/c.pem" {
+		t.Errorf("effectif: %+v %+v", e.DNS.Listen, e.Web)
+	}
+	if v := m.View().Infra; v.DNSListen != "192.168.1.10:53" || v.WebListen != ":9090" || !v.HTTPS {
+		t.Errorf("la vue doit afficher les valeurs en vigueur: %+v", v)
+	}
+
+	// Survit au redémarrage.
+	m2, _ := Open(path, baseConfig(t))
+	if m2.Effective().DNS.Listen != "192.168.1.10:53" {
+		t.Error("les adresses d'écoute doivent survivre au redémarrage")
+	}
+
+	// L'API web (Update) ne doit PAS pouvoir y toucher : risque d'auto-verrouillage.
+	if err := m.Update("infra", raw(InfraSettings{WebListen: ":1"})); err == nil {
+		t.Error("le groupe infra ne doit pas être modifiable via Update")
+	}
+
+	// Validation.
+	for _, bad := range []InfraSettings{{DNSListen: "pas-une-adresse"}, {WebListen: "192.168.1.10"}, {TLSCert: "/c.pem"}} {
+		if err := m.SetInfra(bad); err == nil {
+			t.Errorf("%+v devrait être refusé", bad)
+		}
+	}
+
+	// Retour à config.yaml.
+	if err := m.ClearInfra(); err != nil {
+		t.Fatal(err)
+	}
+	if e := m.Effective(); e.DNS.Listen != ":53" || e.Web.TLSCert != "" {
+		t.Errorf("après ClearInfra: %+v %+v", e.DNS.Listen, e.Web)
+	}
+}

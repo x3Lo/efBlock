@@ -1,0 +1,59 @@
+name: Release
+
+# Publie les paquets Debian et l'ISO d'installation quand tu crées une version :
+#     git tag v1.0.0 && git push origin v1.0.0
+# Tout apparaît dans l'onglet « Releases » du dépôt, avec le fichier SHA256SUMS que la
+# console d'efBlock utilise pour vérifier les mises à jour.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # lancement manuel : construit sans publier (fichiers téléchargeables 7 jours)
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Outils
+        run: sudo apt-get update && sudo apt-get install -y xorriso
+      - name: Tests
+        run: go test ./...
+      - name: Version
+        id: v
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0+ci${GITHUB_RUN_NUMBER}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Paquets Debian (amd64 et arm64)
+        run: |
+          packaging/build-deb.sh "${{ steps.v.outputs.version }}" amd64
+          packaging/build-deb.sh "${{ steps.v.outputs.version }}" arm64
+      - name: ISO d'installation
+        run: image/build.sh "${{ steps.v.outputs.version }}"
+      - name: Empreintes
+        run: cd dist && sha256sum efblock_*.deb efblock-*.iso > SHA256SUMS && cat SHA256SUMS
+      - name: Publier la version
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/efblock_*.deb dist/efblock-*.iso dist/SHA256SUMS \
+            --title "efBlock $GITHUB_REF_NAME" --generate-notes
+      - name: Garder les fichiers (lancement manuel)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: efblock-${{ steps.v.outputs.version }}
+          path: |
+            dist/efblock_*.deb
+            dist/efblock-*.iso
+            dist/SHA256SUMS
+          retention-days: 7

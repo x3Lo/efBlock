@@ -9,3 +9,4 @@ node_modules/
 /web-ui/node_modules/
 /web-ui/.next/
 /web-ui/out/
+/dist/

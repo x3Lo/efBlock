@@ -50,7 +50,83 @@ Client ──► efBlock (UDP/TCP :53)
                     └─ Journal (SQLite, écriture asynchrone)
 ```
 
-## Installation sur Debian
+## Installation
+
+Trois façons, de la plus simple à la plus manuelle.
+
+### Option 1 : l'ISO (recommandée)
+
+Une image qui installe un Debian minimal avec efBlock déjà en place, sur le modèle de pfSense ou OPNsense.
+
+1. Télécharge `efblock-X.Y.Z-amd64.iso` dans l'onglet **Releases** du dépôt (et son `SHA256SUMS` pour vérifier le fichier).
+2. Démarre la machine (ou la VM) dessus. Dans le menu de démarrage :
+   - **Installer efBlock (EFFACE LE PREMIER DISQUE)** : installation automatique, sans aucune question. Elle choisit le premier
+     disque interne, **jamais la clé USB** sur laquelle tu as démarré.
+   - **Installation guidée** : mêmes réglages, mais tu choisis le disque.
+
+   Rien n'est effacé tant que tu n'as pas choisi une entrée : le menu attend.
+3. La machine redémarre. Un **menu s'affiche sur son écran** : il indique l'adresse de l'interface web, et te propose de régler le
+   réseau (DHCP ou adresse fixe) et de **choisir le mot de passe** (option 2). C'est tout.
+
+L'installation **télécharge les paquets Debian** : la machine doit avoir internet pendant l'installation (DHCP). Il n'y a aucun
+mot de passe par défaut : tu le choisis au premier démarrage.
+
+### Option 2 : le paquet Debian
+
+Sur un Debian 13 existant (ou Ubuntu récent), en root :
+
+```bash
+apt install ./efblock_X.Y.Z_amd64.deb      # amd64 ; il existe aussi une version arm64
+```
+
+Le paquet crée le compte `efblock`, installe le service et le démarre. Définis ensuite le mot de passe de l'interface web :
+
+```bash
+efblock-console          # menu complet, option 2
+```
+
+### Option 3 : depuis les sources
+
+Voir « Installation depuis les sources » plus bas.
+
+## Console d'administration
+
+`efblock-console` est un menu en texte, **qui évite d'ouvrir des fichiers dans `/etc`**. Sur une installation par ISO, il
+s'affiche tout seul sur l'écran de la machine ; ailleurs, lance-le en root.
+
+```
+  1) Réseau (DHCP ou adresse fixe)
+  2) Mot de passe de l'interface web
+  3) Adresses d'écoute et HTTPS
+  4) Redémarrer le service efBlock
+  5) Voir les journaux
+  6) Mettre à jour efBlock
+  7) Shell (administrateur)
+  8) Redémarrer la machine
+  9) Éteindre la machine
+```
+
+- **Réseau** : choisis la carte, puis DHCP ou une adresse fixe. Les valeurs sont vérifiées avant d'être appliquées (une passerelle
+  hors du réseau est refusée, par exemple).
+- **Adresses d'écoute et HTTPS** : change les ports, et active HTTPS avec un certificat auto-signé généré pour toi. Ces réglages
+  ne sont volontairement pas dans l'interface web : une erreur d'adresse te couperait l'accès à cette interface.
+- **Shell** : le compte administrateur n'a pas de mot de passe au départ ; il te demande d'en choisir un à la première utilisation.
+
+Pour tout le reste (upstreams, listes, groupes, cache, accès), utilise l'**interface web**.
+
+## Mettre à jour
+
+Depuis le menu de la console, **option 6**, ou en une commande :
+
+```bash
+efblock-console -update
+```
+
+Il lit la dernière version publiée sur GitHub, télécharge le paquet, **vérifie son empreinte SHA-256** et l'installe. Ta configuration,
+ton mot de passe et tes réglages sont conservés. L'empreinte protège d'un fichier corrompu ou tronqué ; elle ne protège pas d'un compte
+GitHub piraté, comme pour n'importe quel logiciel : fais confiance à la source.
+
+## Installation depuis les sources
 
 Testé sur Debian 13. Les commandes s'exécutent en **root** (`su -`) ; `sudo` n'est pas nécessaire.
 
@@ -79,9 +155,7 @@ cd efBlock
 make build
 ```
 
-Le dépôt est privé : Git te demande ton identifiant, puis un *jeton d'accès personnel*
-(GitHub, Settings, Developer settings, Fine-grained tokens, permission *Contents : lecture seule*)
-à la place du mot de passe.
+Pour mettre à jour une installation faite depuis les sources : `cd ~/efBlock && git pull && make install`.
 
 Node.js n'est **pas** nécessaire : l'interface est déjà compilée et embarquée dans le binaire.
 
@@ -119,6 +193,8 @@ dig @192.168.1.10 ad.doubleclick.net    # doit répondre 0.0.0.0
 Ouvre ensuite `http://192.168.1.10:8080`. Arrête avec `Ctrl+C`.
 
 ### 5. Installer comme service
+
+(Si tu as installé par ISO ou par paquet, ignore cette section : le service est déjà en place.)
 
 ```bash
 make install
@@ -235,12 +311,6 @@ Un appareil est reconnu par son **adresse IP** : réserve-lui une adresse fixe d
 
 Après une modification de `/etc/efblock/config.yaml` : `systemctl restart efblock`.
 
-## Mettre à jour
-
-```bash
-cd ~/efBlock && git pull && make install
-```
-
 ## Dépannage
 
 **`address already in use` sur le port 53** — un autre programme écoute déjà (souvent `systemd-resolved`
@@ -298,6 +368,8 @@ port **53** (et non 5353) ; Windows teste sa connexion via le DNS.
 make test        # go test -race ./...
 make build       # compile le binaire
 make ui          # recompile l'interface Next.js (nécessite Node 22) et l'embarque
+make deb         # construit le paquet Debian dans dist/
+make iso         # construit l'ISO d'installation dans dist/ (xorriso requis)
 ```
 
 ```
@@ -313,8 +385,22 @@ internal/querylog/    journal SQLite et statistiques
 internal/store/       réglages modifiables depuis l'interface (state.json)
 internal/web/         API JSON sécurisée + interface embarquée (dist/)
 web-ui/               source de l'interface (Next.js, Tailwind, composants shadcn/ui, Recharts ; export statique)
-deploy/               service systemd, script d'installation, config d'exemple
+cmd/efblock-console/  menu d'administration de la machine (réseau, mot de passe, HTTPS, mise à jour)
+packaging/            construction du paquet Debian (.deb)
+image/                construction de l'ISO d'installation (fichier de réponses, menus de démarrage)
+deploy/               service systemd, script d'installation depuis les sources, config d'exemple
 ```
 
 `internal/web/dist/` contient l'interface **compilée**, versionnée pour que `go build` fonctionne sans Node.
 Après une modification de `web-ui/`, relance `make ui` et commite le résultat.
+
+### Publier une version
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+Le workflow `.github/workflows/release.yml` teste, construit les paquets (amd64 et arm64) et l'ISO, puis les publie dans *Releases* avec
+leur `SHA256SUMS`. C'est ce fichier que `efblock-console -update` utilise pour vérifier une mise à jour.
+
+L'ISO se construit à partir de l'ISO « netinst » officielle de Debian, vérifiée par son empreinte (`image/build.sh`).
