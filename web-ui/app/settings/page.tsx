@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 import ConfirmButton from "@/components/confirm-button";
+import Field from "@/components/field";
+import ListField from "@/components/list-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { api, GroupName, Groups, SettingsView, UpstreamTestResult } from "@/lib/api";
 
 type Msg = { error: boolean; text: string } | null;
@@ -134,57 +135,6 @@ function Section({
   );
 }
 
-function Field({ label, help, children }: { label: string; help?: string; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium">{label}</span>
-      {children}
-      {help && <span className="text-xs text-muted-foreground">{help}</span>}
-    </label>
-  );
-}
-
-const parseLines = (s: string) =>
-  s
-    .split("\n")
-    .map((x) => x.trim())
-    .filter(Boolean);
-
-// Zone de texte « une valeur par ligne » qui garde ce que tu tapes (y compris les lignes vides en cours).
-function ListField({
-  value,
-  onChange,
-  rows = 3,
-  placeholder,
-  label,
-}: {
-  value: string[];
-  onChange: (v: string[]) => void;
-  rows?: number;
-  placeholder?: string;
-  label: string;
-}) {
-  const [text, setText] = useState(value.join("\n"));
-  useEffect(() => {
-    if (JSON.stringify(parseLines(text)) !== JSON.stringify(value)) setText(value.join("\n"));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-  return (
-    <Textarea
-      aria-label={label}
-      rows={rows}
-      value={text}
-      placeholder={placeholder}
-      spellCheck={false}
-      autoCapitalize="off"
-      onChange={(e) => {
-        setText(e.target.value);
-        onChange(parseLines(e.target.value));
-      }}
-    />
-  );
-}
-
 // --- Sections ------------------------------------------------------------------
 
 function UpstreamSection({ view, setView }: SectionProps) {
@@ -286,6 +236,16 @@ function FilterSection({ view, setView }: SectionProps) {
       <Field label="Mise à jour des listes toutes les" help="Exemples : 12h, 24h, 30m. Pris en compte au prochain cycle.">
         <Input className="w-32" value={g.draft.update_interval} onChange={(e) => g.patch({ update_interval: e.target.value })} />
       </Field>
+      <div className="flex flex-col gap-1">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" className="size-4 accent-primary" checked={g.draft.cname_check ?? true} onChange={(e) => g.patch({ cname_check: e.target.checked })} />
+          <span>Vérifier aussi les alias (CNAME)</span>
+        </label>
+        <span className="text-xs text-muted-foreground">
+          Un traqueur peut se cacher derrière un nom innocent qui n&apos;est qu&apos;un alias vers lui. Avec cette option, la réponse est bloquée si
+          l&apos;un des alias mène à un domaine de tes listes. Un domaine que tu as toi-même autorisé n&apos;est jamais bloqué de cette façon.
+        </span>
+      </div>
     </Section>
   );
 }
@@ -304,6 +264,25 @@ function CacheSection({ view, setView }: SectionProps) {
       <Field label="Durée de vie maximale" help="Plafond appliqué même si le serveur annonce plus long. Exemple : 24h.">
         <Input className="w-32" value={g.draft.max_ttl} onChange={(e) => g.patch({ max_ttl: e.target.value })} />
       </Field>
+      <div className="flex flex-col gap-1">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" className="size-4 accent-primary" checked={g.draft.serve_stale ?? true} onChange={(e) => g.patch({ serve_stale: e.target.checked })} />
+          <span>Servir une ancienne réponse si aucun upstream ne répond</span>
+        </label>
+        <span className="text-xs text-muted-foreground">
+          Si tes upstreams tombent, un site déjà visité reste joignable avec son ancienne adresse au lieu de tomber en erreur.
+        </span>
+      </div>
+      <Field label="Âge maximal d'une réponse de secours" help="Au-delà, elle n'est plus utilisée. Exemple : 24h.">
+        <Input className="w-32" value={g.draft.stale_max ?? "24h"} disabled={g.draft.serve_stale === false} onChange={(e) => g.patch({ stale_max: e.target.value })} />
+      </Field>
+      <div className="flex flex-col gap-1">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" className="size-4 accent-primary" checked={g.draft.prefetch ?? true} onChange={(e) => g.patch({ prefetch: e.target.checked })} />
+          <span>Rafraîchir en avance les réponses populaires</span>
+        </label>
+        <span className="text-xs text-muted-foreground">Une réponse très demandée est renouvelée juste avant d&apos;expirer, pour ne jamais faire attendre.</span>
+      </div>
     </Section>
   );
 }

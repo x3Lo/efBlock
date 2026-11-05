@@ -35,6 +35,7 @@ const links = [
   { href: "/", label: "Tableau de bord" },
   { href: "/queries/", label: "Journal" },
   { href: "/filters/", label: "Filtres" },
+  { href: "/groups/", label: "Groupes" },
   { href: "/settings/", label: "Réglages" },
 ];
 

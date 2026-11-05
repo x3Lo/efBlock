@@ -67,7 +67,7 @@ export type Stats = {
   blocking: Blocking;
   upstreams: UpstreamStatus[];
   filter: { blocked: number; exceptions: number };
-  cache: { hits: number; misses: number; entries: number } | null;
+  cache: { hits: number; misses: number; entries: number; stale: number } | null;
 };
 
 export type QueryEntry = {
@@ -105,8 +105,8 @@ export type Groups = {
   upstream: { upstreams: string[]; bootstrap: string[]; timeout: string };
   access: { dns_clients: string[]; web_cidrs: string[] };
   local: { upstream: string; domains: string[]; hosts: string[] };
-  filter: { block_mode: string; update_interval: string };
-  cache: { enabled: boolean; max_entries: number; max_ttl: string };
+  filter: { block_mode: string; update_interval: string; cname_check?: boolean };
+  cache: { enabled: boolean; max_entries: number; max_ttl: string; serve_stale?: boolean; stale_max?: string; prefetch?: boolean };
   querylog: { retention_days: number };
 };
 export type GroupName = keyof Groups;
@@ -117,6 +117,23 @@ export type SettingsView = {
   overridden: GroupName[];
   infra: { dns_listen: string; web_listen: string; https: boolean; data_dir: string; querylog_enabled: boolean };
   canRestart: boolean;
+};
+
+// --- Groupes de clients ---
+
+export type Group = {
+  name: string;
+  clients: string[];
+  mode: "custom" | "off";
+  all_lists: boolean;
+  lists: string[];
+  allow: string[];
+  block: string[];
+};
+export type GroupsResponse = {
+  groups: Group[];
+  lists: { name: string; url: string }[];
+  clients: { ip: string; label?: string; count: number }[];
 };
 
 export type UpstreamTestResult = { name: string; ok: boolean; latencyMs: number; error?: string };

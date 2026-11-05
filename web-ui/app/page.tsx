@@ -99,7 +99,7 @@ export default function Dashboard() {
             <Figure
               label="Cache"
               value={nf.format(s.cached)}
-              sub={`${pct(cachePct)} du total, ${nf.format(stats.cache?.entries ?? 0)} entrées`}
+              sub={`${pct(cachePct)} du total, ${nf.format(stats.cache?.entries ?? 0)} entrées${stats.cache?.stale ? `, ${nf.format(stats.cache.stale)} périmées servies` : ""}`}
             />
             <Figure
               label="Domaines dans les listes"

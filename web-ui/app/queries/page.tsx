@@ -183,11 +183,15 @@ export default function Queries() {
                 </TableCell>
                 <TableCell className="font-mono text-xs break-all">
                   {e.name}
-                  {e.rule && e.rule !== e.name && <div className="text-muted-foreground">règle : {e.rule}</div>}
+                  {e.rule && e.rule !== e.name && e.rule !== "stale" && <div className="text-muted-foreground">règle : {e.rule}</div>}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">{e.qtype}</TableCell>
                 <TableCell>
-                  <Badge variant={RESULT[e.action].variant}>{RESULT[e.action].label}</Badge>
+                  {e.rule === "stale" ? (
+                    <Badge variant="warn" title="Aucun upstream n'a répondu : ancienne réponse servie en secours">cache périmé</Badge>
+                  ) : (
+                    <Badge variant={RESULT[e.action].variant}>{RESULT[e.action].label}</Badge>
+                  )}
                 </TableCell>
                 <TableCell className="text-right font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums">
                   {e.durationUs >= 1000 ? `${Math.round(e.durationUs / 1000)} ms` : `${e.durationUs} µs`}

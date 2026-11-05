@@ -13,6 +13,10 @@ appareils du réseau (PC, téléphones, invités) sans rien installer sur eux.
 - **Serveur DNS** UDP + TCP sur le port 53.
 - **Blocage par listes** : formats *hosts* (StevenBlack…), *adblock* (`||domaine^`, OISD…) et un domaine par ligne.
   Réponse `0.0.0.0` / `::` ou `NXDOMAIN`. Un domaine bloqué bloque aussi ses sous-domaines.
+- **Groupes de clients** : des règles différentes selon l'appareil (aucun blocage pour un appareil, seulement certaines
+  listes pour un autre, domaines autorisés ou bloqués en plus).
+- **Détection du CNAME cloaking** : un traqueur caché derrière un nom innocent qui n'est qu'un alias vers lui est bloqué,
+  y compris quand la réponse vient du cache.
 - **Allowlist / blocklist personnelles**, prioritaires sur les listes.
 - **Mise à jour automatique** des listes (24 h par défaut) ; les listes en cache sur disque permettent
   de démarrer même sans internet.
@@ -22,7 +26,9 @@ appareils du réseau (PC, téléphones, invités) sans rien installer sur eux.
 - **Réseau local** : noms fixes (format `/etc/hosts`), domaines confiés à ta box, et zones inverses privées
   jamais envoyées sur internet. Le journal affiche le nom des machines.
 - **Contrôle d'accès** : seuls les réseaux autorisés (par défaut, les réseaux privés) peuvent utiliser le DNS.
-- **Cache** qui respecte les TTL, avec cache négatif (RFC 2308) et éviction LRU.
+- **Cache** qui respecte les TTL, avec cache négatif (RFC 2308) et éviction LRU. Si tous les upstreams tombent, une
+  ancienne réponse est servie en secours (RFC 8767) : un site déjà visité reste joignable. Les réponses populaires sont
+  rafraîchies avant d'expirer, et les requêtes identiques simultanées sont fusionnées en une seule.
 - **Journal des requêtes** (SQLite) : domaine, client, résultat, durée. Purge automatique.
 - **Interface web** (Next.js, shadcn/ui) : tableau de bord avec graphique, pause du blocage (5 min / 30 min / 1 h),
   **journal des requêtes en direct**, gestion des listes et des domaines, et **page Réglages** pour
@@ -202,7 +208,10 @@ l'interface ; il vaut mieux pouvoir la réparer depuis un terminal.
 | | `block_mode` | `zero_ip` | `zero_ip` (0.0.0.0 / ::) ou `nxdomain` |
 | | `update_interval` | `24h` | fréquence de mise à jour des listes |
 | | `data_dir` | `./data` | cache des listes, état, journal |
+| | `cname_check` | `true` | bloque aussi les réponses dont un alias (CNAME) mène à un domaine bloqué |
 | `cache` | `enabled` / `max_entries` / `max_ttl` | `true` / `10000` / `24h` | cache DNS |
+| | `serve_stale` / `stale_max` | `true` / `24h` | sert une ancienne réponse si aucun upstream ne répond, jusqu'à cet âge |
+| | `prefetch` | `true` | rafraîchit en avance les réponses populaires |
 | `querylog` | `enabled` / `retention_days` | `true` / `7` | journal (`-1` = illimité) |
 | `web` | `listen` / `password_hash` | `:8080` / *(vide = désactivée)* | interface d'administration |
 | | `allowed_cidrs` | réseaux privés | qui peut s'y connecter |
@@ -210,6 +219,19 @@ l'interface ; il vaut mieux pouvoir la réparer depuis un terminal.
 
 Les domaines ajoutés **depuis l'interface** sont sauvegardés à part (`state.json`) et s'additionnent à ceux du fichier ;
 l'interface ne peut pas supprimer ceux de `config.yaml`.
+
+### Groupes de clients
+
+La page **Groupes** applique des règles différentes selon l'appareil. Un groupe contient des adresses (`192.168.1.50`)
+ou des réseaux (`192.168.1.0/24`) et choisit :
+- **Aucun blocage** pour ses appareils, ou
+- **Un filtrage personnalisé** : toutes les listes, ou seulement certaines, plus des domaines autorisés ou bloqués propres au groupe.
+
+Ordre de priorité pour un appareil d'un groupe : allowlist du groupe, blocklist du groupe, allowlist globale, blocklist
+globale, exceptions des listes, listes de filtres (celles du groupe). Si un appareil figure dans plusieurs groupes, **le premier
+de la liste** s'applique. Les groupes sont enregistrés dans `data/state.json`.
+
+Un appareil est reconnu par son **adresse IP** : réserve-lui une adresse fixe dans le DHCP de ta box ou de pfSense.
 
 Après une modification de `/etc/efblock/config.yaml` : `systemctl restart efblock`.
 
@@ -265,9 +287,10 @@ port **53** (et non 5353) ; Windows teste sa connexion via le DNS.
 - Un appareil qui utilise son propre DNS chiffré (DoH intégré au navigateur, *iCloud Private Relay*)
   contourne efBlock.
 - Pas de validation DNSSEC (le bit DO est transmis à l'upstream, la validation est laissée au client).
-- Pas de règles par client.
-- Le blocage ne regarde que le nom demandé : un traqueur déguisé derrière un CNAME de premier niveau
-  (« CNAME cloaking ») n'est pas détecté.
+- Les groupes reconnaissent un appareil par son adresse IP, pas par son adresse MAC : une adresse qui change fait sortir
+  l'appareil de son groupe.
+- La vérification des alias porte sur les CNAME d'une même réponse : un traqueur qui répondrait directement avec une
+  adresse IP, sans alias, ne peut être arrêté que par son nom.
 
 ## Développement
 
@@ -281,8 +304,8 @@ make ui          # recompile l'interface Next.js (nécessite Node 22) et l'embar
 cmd/efblock/          point d'entrée : lit la config, assemble les composants
 internal/config/      chargement et validation du YAML
 internal/dnsserver/   serveur UDP/TCP : filtre → cache → upstream, journal
-internal/filter/      parsing des listes (hosts, adblock), matching des domaines, mise à jour
-internal/cache/       cache TTL + LRU + cache négatif
+internal/filter/      parsing des listes (hosts, adblock), matching des domaines, groupes de clients, alias, mise à jour
+internal/cache/       cache TTL + LRU + cache négatif, réponses périmées, préchargement
 internal/upstream/    clients DNS classique, DoT, DoH, état de santé des upstreams
 internal/localdns/    noms fixes, domaines locaux, zones inverses privées, noms des clients
 internal/settings/    réglages modifiables depuis l'interface (settings.json), appliqués à chaud

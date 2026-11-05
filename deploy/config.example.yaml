@@ -59,6 +59,10 @@ filter:
     - name: OISD small
       url: https://small.oisd.nl/
 
+  # Vérifier aussi les alias (CNAME) des réponses : un traqueur caché derrière un nom
+  # innocent est bloqué. Désactive seulement si un site légitime est cassé par cette vérification.
+  # cname_check: true
+
   # Jamais bloqués (sous-domaines inclus). Prioritaire sur tout.
   allowlist: []
   # Toujours bloqués (sous-domaines inclus).
@@ -71,6 +75,12 @@ cache:
   max_entries: 10000
   # Plafond de durée de vie, même si l'upstream annonce un TTL plus long.
   max_ttl: 24h
+  # Si aucun upstream ne répond, servir une ancienne réponse (jusqu'à cet âge) plutôt
+  # que d'échouer : un site déjà visité reste joignable pendant une panne.
+  # serve_stale: true
+  # stale_max: 24h
+  # Rafraîchir en avance les réponses très demandées, juste avant leur expiration.
+  # prefetch: true
 
 querylog:
   # Journal des requêtes (domaine, client, bloqué ou non), dans une base SQLite.
@@ -94,7 +104,8 @@ web:
   # tls_cert: "./data/cert.pem"
   # tls_key: "./data/key.pem"
 
-# Presque tout peut aussi se régler depuis l'interface web (page "Réglages"), sans
+# Les groupes de clients (règles par appareil) se gèrent depuis la page "Groupes" de l'interface.
+# Presque tout le reste peut aussi se régler depuis l'interface web (page "Réglages"), sans
 # redémarrer. Ces réglages sont enregistrés dans data/settings.json et remplacent
 # ceux de ce fichier pour le groupe modifié. Restent ici : les adresses d'écoute
 # (dns.listen, web.listen), HTTPS, le dossier de données et le hash initial du mot de passe.
