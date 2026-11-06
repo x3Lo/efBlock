@@ -59,18 +59,14 @@ Trois façons, de la plus simple à la plus manuelle.
 Une image qui installe un Debian minimal avec efBlock déjà en place, sur le modèle de pfSense ou OPNsense.
 
 1. Télécharge `efblock-X.Y.Z-amd64.iso` dans l'onglet **Releases** du dépôt (et son `SHA256SUMS` pour vérifier le fichier).
-2. Démarre la machine (ou la VM) dessus. Dans le menu de démarrage :
-   - **Installer efBlock (EFFACE LE PREMIER DISQUE)** : installation automatique, sans aucune question. Elle choisit le premier
-     disque interne, **jamais la clé USB** sur laquelle tu as démarré.
-   - **Installation guidée** : mêmes réglages, mais tu choisis le disque.
-   - Les mêmes entrées existent en version **+ serveur SSH**, pour administrer la machine depuis un autre poste. Le compte `root`
-     n'a pas de mot de passe au départ : choisis-le avec l'option 7 de la console, puis `ssh root@<adresse>`. Pense à retirer
-     cette autorisation (`/etc/ssh/sshd_config.d/efblock.conf`) en production.
-
-   Pendant l'installation, Debian te demande la langue, le pays et le clavier (Français, France, AZERTY pour un clavier français).
-   Rien n'est effacé tant que tu n'as pas choisi une entrée : le menu attend.
+2. Démarre la machine (ou la VM) dessus. Le menu n'a qu'une entrée : **Installer efBlock**. Elle choisit le premier disque
+   interne (**jamais la clé USB** sur laquelle tu as démarré) et l'**efface** : rien n'est touché tant que tu ne l'as pas choisie.
+   Debian te demande ensuite la langue, le pays et le clavier (Français, France, clavier français pour de l'AZERTY).
 3. La machine redémarre. Un **menu s'affiche sur son écran** : il indique l'adresse de l'interface web, et te propose de régler le
    réseau (DHCP ou adresse fixe) et de **choisir le mot de passe** (option 2). C'est tout.
+   Au tout premier démarrage, quelques questions oui/non terminent l'installation : mot de passe de l'interface web et, si tu le
+   souhaites, **serveur SSH** (administration depuis un autre poste ; il autorise `root` par mot de passe, à retirer en production
+   en supprimant `/etc/ssh/sshd_config.d/00-efblock.conf`).
 
 L'installation **télécharge les paquets Debian** : la machine doit avoir internet pendant l'installation (DHCP). Il n'y a aucun
 mot de passe par défaut : tu le choisis au premier démarrage.

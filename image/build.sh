@@ -66,7 +66,6 @@ STAGE="dist/iso-stage"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/efblock"
 cat image/files/preseed-common.cfg image/files/preseed-partman-auto.cfg >"$STAGE/efblock/preseed-auto.cfg"
-cp image/files/preseed-common.cfg "$STAGE/efblock/preseed-guided.cfg"
 cp image/files/late.sh "$STAGE/efblock/late.sh"
 cp "$DEB" "$STAGE/efblock/efblock_${VERSION}_amd64.deb"
 
@@ -78,7 +77,14 @@ echo "==> assemblage de $OUT"
 ARGS=(-indev "$BASE" -outdev "$OUT" -boot_image any replay
 	-map "$STAGE/efblock" /efblock
 	-map image/files/grub.cfg /boot/grub/grub.cfg)
-[[ $MAP_ISOLINUX == 1 ]] && ARGS+=(-map image/files/txt.cfg /isolinux/txt.cfg)
+if [[ $MAP_ISOLINUX == 1 ]]; then
+	ARGS+=(-map image/files/txt.cfg /isolinux/txt.cfg)
+	# Menu BIOS réduit à l'entrée efBlock (sans « Graphical install », options avancées, etc.).
+	# Seulement si la base a le fichier de style que ce menu inclut.
+	if has /isolinux/menu.cfg && has /isolinux/stdmenu.cfg; then
+		ARGS+=(-map image/files/menu.cfg /isolinux/menu.cfg)
+	fi
+fi
 xorriso "${ARGS[@]}" -commit >/dev/null
 
 ( cd dist && sha256sum "$(basename "$OUT")" >"$(basename "$OUT").sha256" )

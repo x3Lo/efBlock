@@ -59,7 +59,7 @@ jobs:
           ok=1
           printf '%s' "$report" | grep -Ei 'El Torito boot img.*BIOS' >/dev/null || { echo "::error::pas d'entrée de démarrage BIOS dans l'ISO"; ok=0; }
           printf '%s' "$report" | grep -Ei 'El Torito boot img.*UEFI' >/dev/null || { echo "::error::pas d'entrée de démarrage UEFI dans l'ISO"; ok=0; }
-          for f in preseed-auto.cfg preseed-guided.cfg late.sh; do
+          for f in preseed-auto.cfg late.sh; do
             printf '%s' "$files" | grep -q "/efblock/$f" || { echo "::error::$f absent de l'ISO"; ok=0; }
           done
           printf '%s' "$files" | grep -Eq '/efblock/efblock_.*_amd64\.deb' || { echo "::error::paquet efBlock absent de l'ISO"; ok=0; }

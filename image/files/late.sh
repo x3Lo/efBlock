@@ -45,21 +45,6 @@ ExecStart=/bin/sh -c 'rm -f /etc/resolv.conf; printf "nameserver 127.0.0.1\nname
 WantedBy=multi-user.target
 UNIT
 
-# --- Serveur SSH : seulement si l'entrée « avec serveur SSH » du menu de démarrage a été choisie ---
-if grep -q 'efblock-ssh=1' /proc/cmdline; then
-    if in-target apt-get -y install openssh-server; then
-        # Le compte root n'a pas de mot de passe au départ : on le choisit depuis la console
-        # (option 7). SSH l'accepte ensuite, mais il vaut mieux créer un autre compte et
-        # retirer cette autorisation une fois le réseau en production.
-        mkdir -p /target/etc/ssh/sshd_config.d
-        printf 'PermitRootLogin yes\n' >/target/etc/ssh/sshd_config.d/efblock.conf
-        in-target systemctl enable ssh
-        echo "SSH : serveur installé"
-    else
-        echo "ERREUR : installation du serveur SSH"
-    fi
-fi
-
 # --- Console d'administration sur l'écran de la machine ---
 in-target systemctl enable efblock efblock-resolv efblock-console
 
