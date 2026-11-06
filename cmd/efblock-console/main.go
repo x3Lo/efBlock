@@ -63,6 +63,7 @@ func main() {
 	if *applyUpd {
 		os.Exit(applyUpdate())
 	}
+	startExe()
 	ui := &UI{in: bufio.NewReader(os.Stdin), out: os.Stdout}
 	if *doUpdate {
 		if err := runUpdate(ui, *assumeYes); err != nil {
@@ -249,6 +250,7 @@ func printStatus(w *os.File) {
 
 func menu(ui *UI) {
 	for {
+		reexecIfReplaced() // une mise à jour a remplacé le programme : on repart sur la nouvelle version
 		ui.clear()
 		printStatus(ui.out)
 		ui.printf(`
