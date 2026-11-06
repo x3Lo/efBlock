@@ -103,6 +103,7 @@ func main() {
 	var liveCache atomic.Pointer[cache.Cache]
 	liveCache.Store(newCache(cfg))
 	engine.SetCNAMECheck(cfg.Filter.CNAMEEnabled())
+	engine.SetBypassBlock(cfg.Filter.BypassBlocked())
 
 	// Journal des requêtes (SQLite). Close() à l'arrêt écrit les dernières lignes.
 	var qlog *querylog.Logger
@@ -209,6 +210,7 @@ func main() {
 		liveCache.Store(nc)
 		srv.SetCache(nc)
 		engine.SetCNAMECheck(c.Filter.CNAMEEnabled())
+		engine.SetBypassBlock(c.Filter.BypassBlocked())
 		updater.SetInterval(c.Filter.UpdateInterval)
 		qlog.SetRetention(retention(c))
 		if webSrv != nil {

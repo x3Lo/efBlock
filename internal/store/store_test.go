@@ -48,10 +48,25 @@ func TestAddRemoveAppliesImmediately(t *testing.T) {
 	}
 }
 
+// Une adresse complète collée dans le champ est ramenée à son nom de domaine.
+func TestAddDomainFromURL(t *testing.T) {
+	s, eng, _ := newStore(t, nil, nil)
+	if err := s.AddDomain(Block, "https://pub.example.com/banniere.js?x=1"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Domains(Block)
+	if len(got) != 1 || got[0].Domain != "pub.example.com" {
+		t.Errorf("enregistré : %+v, attendu pub.example.com", got)
+	}
+	if v := eng.Check("pub.example.com"); !v.Blocked {
+		t.Error("le domaine extrait de l'adresse doit être bloqué")
+	}
+}
+
 func TestValidationAndErrors(t *testing.T) {
 	s, _, _ := newStore(t, []string{"fixe.example.com"}, nil)
 
-	for _, bad := range []string{"", "pas un domaine", "com", "http://x.com/a", "192.168.0.1"} {
+	for _, bad := range []string{"", "pas un domaine", "com", "http://192.168.0.1/a", "192.168.0.1"} {
 		if err := s.AddDomain(Block, bad); !errors.Is(err, ErrInvalid) {
 			t.Errorf("AddDomain(%q) = %v, attendu ErrInvalid", bad, err)
 		}

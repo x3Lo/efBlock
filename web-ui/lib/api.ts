@@ -105,7 +105,7 @@ export type Groups = {
   upstream: { upstreams: string[]; bootstrap: string[]; timeout: string };
   access: { dns_clients: string[]; web_cidrs: string[] };
   local: { upstream: string; domains: string[]; hosts: string[] };
-  filter: { block_mode: string; update_interval: string; cname_check?: boolean };
+  filter: { block_mode: string; update_interval: string; cname_check?: boolean; block_bypass?: boolean };
   cache: { enabled: boolean; max_entries: number; max_ttl: string; serve_stale?: boolean; stale_max?: string; prefetch?: boolean };
   querylog: { retention_days: number };
 };

@@ -91,7 +91,14 @@ type Filter struct {
 
 	// CNAMECheck : vérifier aussi les alias (CNAME) des réponses ("CNAME cloaking"). Activé par défaut.
 	CNAMECheck *bool `yaml:"cname_check"`
+
+	// BlockBypass : empêcher les appareils de contourner efBlock avec leur propre DNS chiffré
+	// (Firefox, iCloud Private Relay, serveurs DoH connus). Activé par défaut.
+	BlockBypass *bool `yaml:"block_bypass"`
 }
+
+// BypassBlocked indique si les contournements sont bloqués (oui, sauf "block_bypass: false").
+func (f Filter) BypassBlocked() bool { return f.BlockBypass == nil || *f.BlockBypass }
 
 // CNAMEEnabled indique si les alias sont vérifiés (oui, sauf "cname_check: false").
 func (f Filter) CNAMEEnabled() bool { return f.CNAMECheck == nil || *f.CNAMECheck }

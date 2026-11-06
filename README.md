@@ -17,6 +17,8 @@ appareils du réseau (PC, téléphones, invités) sans rien installer sur eux.
   listes pour un autre, domaines autorisés ou bloqués en plus).
 - **Détection du CNAME cloaking** : un traqueur caché derrière un nom innocent qui n'est qu'un alias vers lui est bloqué,
   y compris quand la réponse vient du cache.
+- **Anti-contournement** : le domaine témoin de Firefox, iCloud Private Relay et les serveurs DNS chiffrés connus
+  reçoivent « n'existe pas », pour que les appareils reviennent au DNS du réseau au lieu de passer à côté d'efBlock.
 - **Allowlist / blocklist personnelles**, prioritaires sur les listes.
 - **Mise à jour automatique** des listes (24 h par défaut) ; les listes en cache sur disque permettent
   de démarrer même sans internet.
@@ -299,6 +301,7 @@ l'interface ; il vaut mieux pouvoir la réparer depuis un terminal.
 | | `update_interval` | `24h` | fréquence de mise à jour des listes |
 | | `data_dir` | `./data` | cache des listes, état, journal |
 | | `cname_check` | `true` | bloque aussi les réponses dont un alias (CNAME) mène à un domaine bloqué |
+| | `block_bypass` | `true` | empêche le contournement par un DNS chiffré (Firefox, iCloud Private Relay, DoH connus) |
 | `cache` | `enabled` / `max_entries` / `max_ttl` | `true` / `10000` / `24h` | cache DNS |
 | | `serve_stale` / `stale_max` | `true` / `24h` | sert une ancienne réponse si aucun upstream ne répond, jusqu'à cet âge |
 | | `prefetch` | `true` | rafraîchit en avance les réponses populaires |

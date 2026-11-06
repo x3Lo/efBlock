@@ -63,7 +63,8 @@ type Local struct {
 type Filter struct {
 	BlockMode      string `json:"block_mode"`
 	UpdateInterval string `json:"update_interval"`
-	CNAMECheck     *bool  `json:"cname_check,omitempty"` // nil = valeur par défaut (activé)
+	CNAMECheck     *bool  `json:"cname_check,omitempty"`  // nil = valeur par défaut (activé)
+	BlockBypass    *bool  `json:"block_bypass,omitempty"` // nil = valeur par défaut (activé)
 }
 
 // Cache : cache DNS.
@@ -215,6 +216,7 @@ func (m *Manager) build(ov Overrides) (*config.Config, error) {
 		}
 		c.Filter.UpdateInterval = d
 		c.Filter.CNAMECheck = copyBool(g.CNAMECheck)
+		c.Filter.BlockBypass = copyBool(g.BlockBypass)
 	}
 	if g := ov.Cache; g != nil {
 		enabled := g.Enabled
@@ -506,7 +508,7 @@ func groupsOf(c *config.Config) Groups {
 		Upstream: Upstream{Upstreams: nz(c.DNS.Upstreams), Bootstrap: nz(c.DNS.Bootstrap), Timeout: fmtDuration(c.DNS.Timeout)},
 		Access:   Access{DNSClients: nz(c.DNS.AllowedClients), WebCIDRs: nz(c.Web.AllowedCIDRs)},
 		Local:    Local{Upstream: c.DNS.Local.Upstream, Domains: nz(c.DNS.Local.Domains), Hosts: nz(c.DNS.Local.Hosts)},
-		Filter:   Filter{BlockMode: c.Filter.BlockMode, UpdateInterval: fmtDuration(c.Filter.UpdateInterval), CNAMECheck: ptrBool(c.Filter.CNAMEEnabled())},
+		Filter:   Filter{BlockMode: c.Filter.BlockMode, UpdateInterval: fmtDuration(c.Filter.UpdateInterval), CNAMECheck: ptrBool(c.Filter.CNAMEEnabled()), BlockBypass: ptrBool(c.Filter.BypassBlocked())},
 		Cache: Cache{Enabled: c.Cache.IsEnabled(), MaxEntries: c.Cache.MaxEntries, MaxTTL: fmtDuration(c.Cache.MaxTTL),
 			ServeStale: ptrBool(c.Cache.ServeStaleEnabled()), StaleMax: fmtDuration(c.Cache.StaleMax), Prefetch: ptrBool(c.Cache.PrefetchEnabled())},
 		QueryLog: QueryLog{RetentionDays: c.Log.RetentionDays},

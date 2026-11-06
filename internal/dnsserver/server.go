@@ -176,6 +176,9 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 	if v.Blocked {
 		slog.Debug("bloqué", "name", q.Name, "type", qtype, "règle", v.Rule, "raison", v.Reason, "groupe", v.Group)
 		resp := s.blockedResponse(req, q)
+		if v.NXDomain { // contournement : seul un NXDOMAIN est compris (domaine témoin de Firefox...)
+			resp = s.nxdomainResponse(req)
+		}
 		s.reply(w, req, resp)
 		record(querylog.ActionBlocked, v.Rule, resp.Rcode)
 		return
@@ -351,6 +354,15 @@ func (s *Server) blockedResponse(req *dns.Msg, q dns.Question) *dns.Msg {
 		hdr.Rrtype = dns.TypeAAAA
 		resp.Answer = append(resp.Answer, &dns.AAAA{Hdr: hdr, AAAA: net.IPv6zero})
 	}
+	return resp
+}
+
+// nxdomainResponse répond « ce domaine n'existe pas ».
+func (s *Server) nxdomainResponse(req *dns.Msg) *dns.Msg {
+	resp := new(dns.Msg)
+	resp.SetReply(req)
+	resp.RecursionAvailable = true
+	resp.Rcode = dns.RcodeNameError
 	return resp
 }
 
