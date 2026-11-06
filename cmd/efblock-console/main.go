@@ -65,6 +65,7 @@ func main() {
 		}
 		return
 	}
+	firstBoot(ui)
 	menu(ui)
 }
 
