@@ -12,6 +12,31 @@ cp "$DEB" /target/tmp/efblock.deb
 in-target dpkg -i /tmp/efblock.deb || echo "ERREUR : installation du paquet efBlock"
 rm -f /target/tmp/efblock.deb
 
+# --- Kit hors ligne : outils (dig, curl, nano, ping, heure, certificats) installés depuis l'ISO ---
+# Le kit est aussi copié sur le disque (serveur SSH inclus) : la console l'utilise sans internet.
+if [ -d /cdrom/efblock/kit ]; then
+    mkdir -p /target/usr/share/efblock
+    cp -r /cdrom/efblock/kit /target/usr/share/efblock/kit
+    if in-target sh -c 'dpkg -i /usr/share/efblock/kit/base/*.deb'; then
+        echo "kit : outils installés"
+    else
+        echo "AVERTISSEMENT : installation du kit incomplète"
+        in-target dpkg --configure -a || true
+    fi
+else
+    echo "AVERTISSEMENT : pas de kit sur le support : outils et serveur SSH absents hors ligne"
+fi
+
+# --- Dépôt Debian pour un « apt install » ultérieur (facultatif : l'installation n'en a pas besoin) ---
+mkdir -p /target/etc/apt/sources.list.d
+cat >/target/etc/apt/sources.list.d/debian.sources <<'SRC'
+Types: deb
+URIs: http://deb.debian.org/debian
+Suites: stable stable-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+SRC
+
 # --- Réseau : systemd-networkd (c'est aussi lui que pilote le menu de la console) ---
 if in-target test -x /usr/lib/systemd/systemd-networkd; then
     in-target apt-get -y purge ifupdown isc-dhcp-client isc-dhcp-common || true

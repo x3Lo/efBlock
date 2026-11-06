@@ -55,8 +55,7 @@ Version: $VERSION
 Architecture: $ARCH
 Maintainer: efBlock <noreply@users.noreply.github.com>
 Installed-Size: $SIZE
-Depends: ca-certificates
-Recommends: bind9-dnsutils
+Recommends: ca-certificates, bind9-dnsutils
 Section: net
 Priority: optional
 Homepage: https://github.com/x3Lo/efBlock

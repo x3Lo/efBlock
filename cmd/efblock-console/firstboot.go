@@ -55,12 +55,9 @@ func setWebPasswordCmd() error {
 
 // installSSH installe openssh-server et, si on le veut, autorise root à s'y connecter.
 func installSSH(ui *UI) {
-	ui.printf("\nInstallation (internet nécessaire)…\n")
-	cmd := exec.Command("apt-get", "-y", "install", "openssh-server")
-	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		ui.printf("\nInstallation impossible : %v\nVérifie le réseau (option 1 du menu), puis installe-le avec : apt install openssh-server\n", err)
+	ui.printf("\nInstallation…\n")
+	if err := installSSHPackage(); err != nil {
+		ui.printf("\nInstallation impossible : %v\n", err)
 		return
 	}
 	ui.printf("\nLe compte administrateur (root) est le seul compte de la machine.\n")
@@ -85,4 +82,22 @@ func installSSH(ui *UI) {
 		ui.printf("\nSSH est actif. Connexion depuis un autre poste : ssh root@%s\n", firstIPv4(listIfaces()))
 		ui.printf("Une fois la machine en production, tu pourras retirer cette autorisation en supprimant %s.\n", sshDropIn)
 	}
+}
+
+// sshKit : paquets du serveur SSH copiés sur le disque à l'installation (aucun internet nécessaire).
+var sshKit = "/usr/share/efblock/kit/ssh"
+
+// installSSHPackage installe openssh-server depuis le kit de l'ISO ; à défaut, depuis internet.
+func installSSHPackage() error {
+	env := append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+	if debs, _ := filepath.Glob(filepath.Join(sshKit, "*.deb")); len(debs) > 0 {
+		cmd := exec.Command("dpkg", append([]string{"-i"}, debs...)...)
+		cmd.Env, cmd.Stdout, cmd.Stderr = env, os.Stdout, os.Stderr
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+	}
+	cmd := exec.Command("apt-get", "-y", "install", "openssh-server")
+	cmd.Env, cmd.Stdout, cmd.Stderr = env, os.Stdout, os.Stderr
+	return cmd.Run()
 }
