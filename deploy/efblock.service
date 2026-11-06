@@ -1,4 +1,7 @@
 [Unit]
+# Ne jamais renoncer à relancer le service : sans ça, systemd s'arrête après 5 échecs en 10 s
+# (réseau pas encore prêt au démarrage...) et le service reste éteint.
+StartLimitIntervalSec=0
 Description=efBlock - bloqueur de publicités DNS
 Documentation=https://github.com/x3Lo/efBlock
 # L'interface réseau (et son IP fixe) doit exister avant qu'on se mette à écouter dessus.
