@@ -18,10 +18,11 @@ const (
 	ReasonListAllow               // exception (@@) d'une liste de filtres
 	ReasonList                    // domaine présent dans une liste de filtres
 	ReasonGroupOff                // le groupe du client n'a aucun blocage
+	ReasonBypass                  // tentative de contourner efBlock (DNS chiffré d'un navigateur, relais iCloud...)
 )
 
 func (r Reason) String() string {
-	return [...]string{"none", "allowlist", "blocklist", "list-exception", "list", "group-off"}[r]
+	return [...]string{"none", "allowlist", "blocklist", "list-exception", "list", "group-off", "bypass"}[r]
 }
 
 // Verdict est le résultat d'une vérification.
@@ -31,6 +32,9 @@ type Verdict struct {
 	Rule    string // la règle qui a matché (ex: "doubleclick.net")
 	Group   string // nom du groupe de clients appliqué ("" = réglages par défaut)
 	Via     string // si bloqué à cause d'un alias (CNAME) : le nom vers lequel le domaine pointe
+	// NXDomain : répondre « ce domaine n'existe pas », quel que soit le mode de blocage choisi.
+	// Nécessaire pour les contournements : Firefox ne renonce à son DNS chiffré que sur un NXDOMAIN.
+	NXDomain bool
 }
 
 // listSets : les domaines d'UNE liste de filtres. Chaque liste garde son propre
@@ -112,6 +116,7 @@ type Engine struct {
 
 	enabled    atomic.Bool
 	cnameCheck atomic.Bool // vérifier aussi les alias (CNAME) des réponses
+	bypass     atomic.Bool // bloquer les contournements (voir bypassDomains)
 
 	// pausedUntil : fin d'une pause temporaire (nanosecondes Unix, 0 = pas de pause).
 	pausedUntil atomic.Int64
@@ -125,11 +130,15 @@ func NewEngine() *Engine {
 	e.groups.Store(&groupSet{})
 	e.enabled.Store(true)
 	e.cnameCheck.Store(true)
+	e.bypass.Store(true)
 	return e
 }
 
 // SetEnabled active ou désactive globalement le blocage (sans limite de durée).
 func (e *Engine) SetEnabled(on bool) { e.enabled.Store(on) }
+
+// SetBypassBlock active ou désactive le blocage des contournements (voir bypassDomains).
+func (e *Engine) SetBypassBlock(on bool) { e.bypass.Store(on) }
 
 // SetCNAMECheck active ou désactive la vérification des alias (voir CheckAliases).
 func (e *Engine) SetCNAMECheck(on bool) { e.cnameCheck.Store(on) }
@@ -280,6 +289,7 @@ func (e *Engine) Check(name string) Verdict { return e.CheckClient(nil, name) }
 //  2. allowlist du groupe     -> jamais bloqué
 //  3. blocklist du groupe     -> bloqué
 //  4. allowlist perso         -> jamais bloqué
+//     anti-contournement      -> bloqué (NXDOMAIN), si activé
 //  5. blocklist perso         -> bloqué
 //  6. exceptions des listes   -> jamais bloqué
 //  7. listes de filtres       -> bloqué (seulement celles que le groupe utilise)
@@ -307,6 +317,12 @@ func (e *Engine) CheckClient(ip net.IP, name string) Verdict {
 	u := e.user.Load()
 	if rule, ok := u.allow.Match(name); ok {
 		return Verdict{Reason: ReasonUserAllow, Rule: rule, Group: gname}
+	}
+	// Contournements : après les autorisations (tu peux autoriser un de ces noms), avant le reste.
+	if e.bypass.Load() {
+		if rule, ok := bypassDomains.Match(name); ok {
+			return Verdict{Blocked: true, Reason: ReasonBypass, Rule: "anti-contournement : " + rule, Group: gname, NXDomain: true}
+		}
 	}
 	if rule, ok := u.block.Match(name); ok {
 		return Verdict{Blocked: true, Reason: ReasonUserBlock, Rule: rule, Group: gname}

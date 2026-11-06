@@ -63,6 +63,12 @@ filter:
   # innocent est bloqué. Désactive seulement si un site légitime est cassé par cette vérification.
   # cname_check: true
 
+  # Empêcher le contournement d'efBlock : le domaine témoin de Firefox, iCloud Private Relay et les
+  # serveurs DNS chiffrés connus (dns.google, cloudflare-dns.com...) reçoivent « n'existe pas ».
+  # Les appareils reviennent alors au DNS du réseau. Désactive si tu veux laisser un appareil les utiliser
+  # (ou autorise seulement le domaine voulu dans l'allowlist).
+  # block_bypass: true
+
   # Jamais bloqués (sous-domaines inclus). Prioritaire sur tout.
   allowlist: []
   # Toujours bloqués (sous-domaines inclus).

@@ -299,3 +299,23 @@ func TestHotReconfiguration(t *testing.T) {
 		t.Errorf("mode NXDOMAIN: rcode=%s", dns.RcodeToString[r.Rcode])
 	}
 }
+
+// Le domaine témoin de Firefox doit recevoir un vrai NXDOMAIN, même quand les domaines bloqués
+// reçoivent 0.0.0.0 : Firefox n'abandonne son DNS chiffré que sur un NXDOMAIN.
+func TestBypassAnsweredWithNXDomain(t *testing.T) {
+	upAddr, hits := startFakeUpstream(t)
+	eng := filter.NewEngine()
+	eng.SetUserRules(nil, []string{"ads.example.com"})
+	addr := startEfBlock(t, upAddr, eng, cache.New(100, 0)) // mode par défaut : 0.0.0.0
+	hits.Store(0)
+
+	if resp := ask(t, addr, "use-application-dns.net.", dns.TypeA); resp.Rcode != dns.RcodeNameError || len(resp.Answer) != 0 {
+		t.Errorf("domaine témoin : rcode %s, réponses %v ; attendu NXDOMAIN sans réponse", dns.RcodeToString[resp.Rcode], resp.Answer)
+	}
+	if resp := ask(t, addr, "ads.example.com.", dns.TypeA); len(resp.Answer) != 1 || resp.Answer[0].(*dns.A).A.String() != "0.0.0.0" {
+		t.Errorf("un blocage ordinaire garde sa réponse 0.0.0.0 : %v", resp.Answer)
+	}
+	if hits.Load() != 0 {
+		t.Error("un contournement bloqué ne doit pas atteindre l'upstream")
+	}
+}

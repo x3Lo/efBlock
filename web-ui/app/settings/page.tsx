@@ -272,6 +272,18 @@ function FilterSection({ view, setView }: SectionProps) {
           l&apos;un des alias mène à un domaine de tes listes. Un domaine que tu as toi-même autorisé n&apos;est jamais bloqué de cette façon.
         </span>
       </div>
+      <div className="flex flex-col gap-1">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" className="size-4 accent-primary" checked={g.draft.block_bypass ?? true} onChange={(e) => g.patch({ block_bypass: e.target.checked })} />
+          <span>Empêcher le contournement d&apos;efBlock</span>
+        </label>
+        <span className="text-xs text-muted-foreground">
+          Certains appareils envoient leurs questions à leur propre DNS chiffré et ne passent plus par efBlock : Firefox, iCloud Private
+          Relay (iPhone, Mac), le « DNS privé » d&apos;Android, ou un serveur DoH configuré à la main. Cette option leur répond que ces
+          serveurs n&apos;existent pas, et ils reviennent au DNS du réseau. Une adresse IP écrite en dur dans un appareil passe toujours :
+          bloque alors les ports 853 et les serveurs DoH dans ton pare-feu.
+        </span>
+      </div>
     </Section>
   );
 }
