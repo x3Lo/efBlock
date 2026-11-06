@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import BackupSection from "@/components/backup-section";
 import ConfirmButton from "@/components/confirm-button";
 import Field from "@/components/field";
 import ListField from "@/components/list-field";
@@ -46,6 +47,7 @@ export default function Settings() {
       {section === "general" && (
         <div className="flex flex-col gap-4">
           <UpdateSection />
+          <BackupSection />
           <PasswordSection />
           <InfraSection view={view} />
         </div>

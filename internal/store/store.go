@@ -380,9 +380,6 @@ func cloneGroups(gs []Group) []Group {
 // SetGroups remplace tous les groupes. Tout est validé avant d'être appliqué : en cas
 // d'erreur, rien n'est modifié.
 func (s *Store) SetGroups(in []Group) error {
-	if len(in) > maxGroups {
-		return fmt.Errorf("%w: %d groupes au maximum", ErrTooMany, maxGroups)
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -390,57 +387,9 @@ func (s *Store) SetGroups(in []Group) error {
 	for _, l := range s.allLists() {
 		known[l.URL] = true
 	}
-
-	var out []Group
-	seen := map[string]bool{}
-	for _, g := range in {
-		g.Name = strings.TrimSpace(g.Name)
-		if g.Name == "" || len(g.Name) > maxGroupNameLength {
-			return fmt.Errorf("%w: le nom d'un groupe doit faire entre 1 et %d caractères", ErrInvalid, maxGroupNameLength)
-		}
-		if seen[strings.ToLower(g.Name)] {
-			return fmt.Errorf("%w: deux groupes s'appellent « %s »", ErrInvalid, g.Name)
-		}
-		seen[strings.ToLower(g.Name)] = true
-		if g.Mode != ModeCustom && g.Mode != ModeOff {
-			return fmt.Errorf("%w: mode inconnu pour « %s »", ErrInvalid, g.Name)
-		}
-
-		if len(g.Clients) == 0 {
-			return fmt.Errorf("%w: le groupe « %s » n'a aucun client", ErrInvalid, g.Name)
-		}
-		if len(g.Clients) > maxGroupClients {
-			return fmt.Errorf("%w: « %s » : %d clients au maximum", ErrTooMany, g.Name, maxGroupClients)
-		}
-		clients := make([]string, 0, len(g.Clients))
-		for _, c := range g.Clients {
-			if _, err := filter.ParseClient(c); err != nil {
-				return fmt.Errorf("%w: groupe « %s » : %v", ErrInvalid, g.Name, err)
-			}
-			clients = append(clients, strings.TrimSpace(c))
-		}
-		g.Clients = clients
-
-		g.Allow, g.Block = nil2empty(g.Allow), nil2empty(g.Block)
-		var err error
-		if g.Allow, err = normalizeDomains(g.Name, g.Allow); err != nil {
-			return err
-		}
-		if g.Block, err = normalizeDomains(g.Name, g.Block); err != nil {
-			return err
-		}
-
-		if g.AllLists {
-			g.Lists = []string{}
-		} else {
-			for _, u := range g.Lists {
-				if !known[u] {
-					return fmt.Errorf("%w: groupe « %s » : liste inconnue (%s)", ErrInvalid, g.Name, u)
-				}
-			}
-			g.Lists = nil2empty(g.Lists)
-		}
-		out = append(out, g)
+	out, err := validateGroups(in, known)
+	if err != nil {
+		return err
 	}
 
 	// Le moteur est le dernier juge : s'il refuse, on n'enregistre rien.
@@ -456,6 +405,180 @@ func (s *Store) SetGroups(in []Group) error {
 		return err
 	}
 	return nil
+}
+
+// validateGroups vérifie et normalise des groupes ; known : adresses des listes existantes.
+func validateGroups(in []Group, known map[string]bool) ([]Group, error) {
+	if len(in) > maxGroups {
+		return nil, fmt.Errorf("%w: %d groupes au maximum", ErrTooMany, maxGroups)
+	}
+	var out []Group
+	seen := map[string]bool{}
+	for _, g := range in {
+		g.Name = strings.TrimSpace(g.Name)
+		if g.Name == "" || len(g.Name) > maxGroupNameLength {
+			return nil, fmt.Errorf("%w: le nom d'un groupe doit faire entre 1 et %d caractères", ErrInvalid, maxGroupNameLength)
+		}
+		if seen[strings.ToLower(g.Name)] {
+			return nil, fmt.Errorf("%w: deux groupes s'appellent « %s »", ErrInvalid, g.Name)
+		}
+		seen[strings.ToLower(g.Name)] = true
+		if g.Mode != ModeCustom && g.Mode != ModeOff {
+			return nil, fmt.Errorf("%w: mode inconnu pour « %s »", ErrInvalid, g.Name)
+		}
+
+		if len(g.Clients) == 0 {
+			return nil, fmt.Errorf("%w: le groupe « %s » n'a aucun client", ErrInvalid, g.Name)
+		}
+		if len(g.Clients) > maxGroupClients {
+			return nil, fmt.Errorf("%w: « %s » : %d clients au maximum", ErrTooMany, g.Name, maxGroupClients)
+		}
+		clients := make([]string, 0, len(g.Clients))
+		for _, c := range g.Clients {
+			if _, err := filter.ParseClient(c); err != nil {
+				return nil, fmt.Errorf("%w: groupe « %s » : %v", ErrInvalid, g.Name, err)
+			}
+			clients = append(clients, strings.TrimSpace(c))
+		}
+		g.Clients = clients
+
+		g.Allow, g.Block = nil2empty(g.Allow), nil2empty(g.Block)
+		var err error
+		if g.Allow, err = normalizeDomains(g.Name, g.Allow); err != nil {
+			return nil, err
+		}
+		if g.Block, err = normalizeDomains(g.Name, g.Block); err != nil {
+			return nil, err
+		}
+
+		if g.AllLists {
+			g.Lists = []string{}
+		} else {
+			for _, u := range g.Lists {
+				if !known[u] {
+					return nil, fmt.Errorf("%w: groupe « %s » : liste inconnue (%s)", ErrInvalid, g.Name, u)
+				}
+			}
+			g.Lists = nil2empty(g.Lists)
+		}
+		out = append(out, g)
+	}
+
+	return out, nil
+}
+
+// Backup : ce qui a été ajouté depuis l'interface (les éléments de config.yaml restent dans ce fichier).
+type Backup struct {
+	Allowlist []string     `json:"allowlist"`
+	Blocklist []string     `json:"blocklist"`
+	Lists     []BackupList `json:"lists"`
+	Groups    []Group      `json:"groups"`
+}
+
+// BackupList : une liste de filtres ajoutée depuis l'interface.
+type BackupList struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// Backup retourne une copie de ce qui a été ajouté depuis l'interface.
+func (s *Store) Backup() Backup {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := Backup{
+		Allowlist: append([]string{}, s.st.Allowlist...),
+		Blocklist: append([]string{}, s.st.Blocklist...),
+		Lists:     []BackupList{},
+		Groups:    append([]Group{}, s.st.Groups...),
+	}
+	for _, l := range s.st.Lists {
+		b.Lists = append(b.Lists, BackupList{Name: l.Name, URL: l.URL})
+	}
+	return b
+}
+
+// Restore remplace tout ce qui a été ajouté depuis l'interface par le contenu d'une sauvegarde.
+// Tout est vérifié avant d'appliquer quoi que ce soit : en cas d'erreur, rien n'est changé.
+func (s *Store) Restore(b Backup) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var next state
+	var err error
+	if next.Allowlist, err = restoreDomains("allowlist", b.Allowlist); err != nil {
+		return err
+	}
+	if next.Blocklist, err = restoreDomains("blocklist", b.Blocklist); err != nil {
+		return err
+	}
+
+	known := map[string]bool{}
+	for _, l := range s.cfg.Lists {
+		known[l.URL] = true
+	}
+	next.Lists = []stateList{}
+	for _, l := range b.Lists {
+		raw := strings.TrimSpace(l.URL)
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%w: liste « %s » : adresse invalide", ErrInvalid, l.Name)
+		}
+		name := strings.TrimSpace(l.Name)
+		if name == "" {
+			name = u.Host
+		}
+		if len(name) > 80 || len(raw) > 500 {
+			return fmt.Errorf("%w: liste « %s » : nom ou adresse trop long", ErrInvalid, name)
+		}
+		if known[raw] {
+			continue // déjà là (config.yaml, ou doublon dans la sauvegarde)
+		}
+		known[raw] = true
+		next.Lists = append(next.Lists, stateList{name, raw})
+	}
+	if len(s.cfg.Lists)+len(next.Lists) > maxLists {
+		return fmt.Errorf("%w: %d listes au maximum", ErrTooMany, maxLists)
+	}
+
+	if next.Groups, err = validateGroups(b.Groups, known); err != nil {
+		return err
+	}
+	next.Groups = append([]Group{}, next.Groups...)
+
+	// Le moteur est le dernier juge : s'il refuse les groupes, on n'enregistre rien.
+	if err := s.engine.SetGroups(groupSpecs(next.Groups)); err != nil {
+		_ = s.engine.SetGroups(groupSpecs(s.st.Groups))
+		return fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	old := s.st
+	s.st = next
+	if err := s.save(); err != nil {
+		s.st = old
+		s.apply(false)
+		return err
+	}
+	s.apply(true) // nouvelles listes : téléchargement tout de suite
+	return nil
+}
+
+// restoreDomains valide les domaines d'une sauvegarde (sans doublon).
+func restoreDomains(what string, in []string) ([]string, error) {
+	if len(in) > maxDomains {
+		return nil, fmt.Errorf("%w: %s : %d domaines au maximum", ErrTooMany, what, maxDomains)
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, d := range in {
+		n, ok := filter.ValidateDomain(strings.TrimSpace(d))
+		if !ok {
+			return nil, fmt.Errorf("%w: %s : %q n'est pas un nom de domaine", ErrInvalid, what, d)
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 func nil2empty(s []string) []string {

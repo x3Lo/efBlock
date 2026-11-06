@@ -135,6 +135,13 @@ root avec la même procédure que la console. La page suit l'avancement et se re
 l'ISO ou par le paquet Debian ; pas pour une installation depuis les sources ni pour une version de développement. La machine a besoin
 d'internet à ce moment-là. Le déroulé est gardé dans `/var/lib/efblock/update.log`.
 
+## Sauvegarder la configuration
+
+Page **Réglages > Général**, carte « Sauvegarde » : « Télécharger une sauvegarde » enregistre un fichier `.json` avec tes réglages,
+tes listes de filtres, tes domaines autorisés et bloqués et tes groupes. « Restaurer depuis un fichier » remet cette configuration,
+sur la même machine ou sur une nouvelle installation. Tout est vérifié avant d'être appliqué : un fichier abîmé ne change rien.
+Le mot de passe et les adresses d'écoute ne sont pas dans la sauvegarde : ils restent ceux de la machine.
+
 ## Installation depuis les sources
 
 Testé sur Debian 13. Les commandes s'exécutent en **root** (`su -`) ; `sudo` n'est pas nécessaire.

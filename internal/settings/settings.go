@@ -363,6 +363,37 @@ func (m *Manager) Reset(group string) error {
 	return m.commit(ov)
 }
 
+// Backup retourne les réglages faits depuis l'interface, sans le mot de passe ni les adresses
+// d'écoute et le HTTPS (propres à la machine : les restaurer ailleurs pourrait couper l'accès).
+func (m *Manager) Backup() Overrides {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ov := m.ov
+	ov.Infra, ov.PasswordHash = nil, ""
+	return ov
+}
+
+// Restore remplace les réglages faits depuis l'interface par ceux d'une sauvegarde. Le mot de
+// passe, les adresses d'écoute et le HTTPS de cette machine sont conservés. Validé et appliqué
+// d'un bloc : en cas d'erreur, rien n'est changé.
+func (m *Manager) Restore(b Overrides) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ov := b
+	ov.Infra, ov.PasswordHash = m.ov.Infra, m.ov.PasswordHash
+	return m.commit(ov)
+}
+
+// CheckRestore vérifie une sauvegarde sans rien appliquer.
+func (m *Manager) CheckRestore(b Overrides) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ov := b
+	ov.Infra, ov.PasswordHash = m.ov.Infra, m.ov.PasswordHash
+	_, err := m.build(ov)
+	return err
+}
+
 // SetInfra enregistre les adresses d'écoute et le HTTPS (utilisé par la console, jamais par l'API web).
 // Les adresses sont validées ; le changement ne prend effet qu'au prochain démarrage.
 func (m *Manager) SetInfra(g InfraSettings) error {

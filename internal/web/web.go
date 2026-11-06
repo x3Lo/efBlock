@@ -107,6 +107,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/password", s.auth(s.handlePassword))
 	mux.HandleFunc("POST /api/restart", s.auth(s.handleRestart))
 	mux.HandleFunc("GET /api/connectivity", s.auth(s.handleConnectivity))
+	mux.HandleFunc("GET /api/backup", s.auth(s.handleBackup))
+	mux.HandleFunc("POST /api/restore", s.auth(s.handleRestore))
 	mux.HandleFunc("GET /api/update", s.auth(s.handleUpdateInfo))
 	mux.HandleFunc("POST /api/update", s.auth(s.handleUpdateApply))
 	mux.HandleFunc("GET /api/allowlist", s.auth(s.handleDomains(store.Allow)))
