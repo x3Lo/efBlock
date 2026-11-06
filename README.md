@@ -127,6 +127,12 @@ Il lit la dernière version publiée sur GitHub, télécharge le paquet, **véri
 ton mot de passe et tes réglages sont conservés. L'empreinte protège d'un fichier corrompu ou tronqué ; elle ne protège pas d'un compte
 GitHub piraté, comme pour n'importe quel logiciel : fais confiance à la source.
 
+**Depuis l'interface web** : page **Réglages**, carte « Mises à jour » (version installée, dernière version, bouton « Mettre à jour »).
+Le service web tourne sans droits : le bouton dépose seulement une demande, qu'une unité systemd (`efblock-update.path`) voit et exécute en
+root avec la même procédure que la console. La page suit l'avancement et se recharge toute seule. Disponible sur une installation par
+l'ISO ou par le paquet Debian ; pas pour une installation depuis les sources ni pour une version de développement. La machine a besoin
+d'internet à ce moment-là. Le déroulé est gardé dans `/var/lib/efblock/update.log`.
+
 ## Installation depuis les sources
 
 Testé sur Debian 13. Les commandes s'exécutent en **root** (`su -`) ; `sudo` n'est pas nécessaire.

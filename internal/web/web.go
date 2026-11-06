@@ -52,6 +52,7 @@ type Deps struct {
 	Upstream   func() *upstream.Forwarder // résolveurs amont actuels (état de santé)
 	ClientName func(ip string) string     // nom d'une machine à partir de son IP ("" si inconnu)
 	Restart    func()                     // redémarre efBlock ; nil si impossible (hors systemd)
+	Update     UpdateConfig               // mise à jour depuis l'interface
 }
 
 // Server est le gestionnaire HTTP de l'interface.
@@ -66,6 +67,8 @@ type Server struct {
 
 	statsMu    sync.Mutex
 	statsCache map[int]cachedStats
+
+	upd updateState
 }
 
 // New crée le serveur.
@@ -102,6 +105,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/upstreams/test", s.auth(s.handleUpstreamsTest))
 	mux.HandleFunc("POST /api/password", s.auth(s.handlePassword))
 	mux.HandleFunc("POST /api/restart", s.auth(s.handleRestart))
+	mux.HandleFunc("GET /api/update", s.auth(s.handleUpdateInfo))
+	mux.HandleFunc("POST /api/update", s.auth(s.handleUpdateApply))
 	mux.HandleFunc("GET /api/allowlist", s.auth(s.handleDomains(store.Allow)))
 	mux.HandleFunc("POST /api/allowlist", s.auth(s.handleAddDomain(store.Allow)))
 	mux.HandleFunc("DELETE /api/allowlist", s.auth(s.handleRemoveDomain(store.Allow)))
