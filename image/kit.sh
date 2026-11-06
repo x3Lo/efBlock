@@ -22,7 +22,7 @@ dl() { # dl <dossier> <paquets...> : télécharge les paquets et leurs dépendan
 	rm -rf "/out/$d/partial" "/out/$d/lock"
 	echo "kit $d : $(ls /out/$d/*.deb 2>/dev/null | wc -l) paquets"
 }
-dl base ca-certificates systemd-timesyncd bind9-dnsutils iproute2 iputils-ping less nano curl
+dl base ca-certificates bind9-dnsutils iproute2 iputils-ping less nano curl
 dl ssh openssh-server
 KITSCRIPT
 
