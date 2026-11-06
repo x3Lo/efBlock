@@ -9,7 +9,7 @@ OUT="${1:?usage : image/kit.sh <dossier>}"
 rm -rf "$OUT"; mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 
-docker run --rm -v "$OUT:/out" debian:stable bash -s <<'KITSCRIPT'
+docker run --rm -i -v "$OUT:/out" debian:stable bash -s <<'KITSCRIPT'
 set -e
 # L'image Docker de Debian supprime les paquets téléchargés (docker-clean) : on le désactive.
 rm -f /etc/apt/apt.conf.d/docker-clean
