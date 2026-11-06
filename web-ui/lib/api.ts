@@ -150,6 +150,16 @@ export type UpdateInfo = {
   status: UpdateStatus;
 };
 
+export type Connectivity = {
+  dns: boolean;
+  latency_ms: number;
+  error?: string;
+  checked: string;
+  upstreams_total: number;
+  upstreams_healthy: number;
+  updates: "ok" | "error" | "unknown";
+};
+
 export const nf = new Intl.NumberFormat("fr-FR");
 export const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });

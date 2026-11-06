@@ -1,18 +1,31 @@
 "use client";
 
+import { ShieldAlert, ShieldCheck, ShieldOff } from "lucide-react";
 import { useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { api, Blocking } from "@/lib/api";
+import { Card } from "@/components/ui/card";
+import { api, Blocking, nf } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
-// Interrupteur du blocage : actif, désactivé, ou en pause pour N minutes.
+const period = (hours: number) => (hours <= 1 ? "la dernière heure" : hours <= 24 ? "les dernières 24 h" : "les 7 derniers jours");
+
+// État de la protection, en grand en tête du tableau de bord, avec ses commandes :
+// actif, désactivé, ou en pause pour N minutes.
 export default function BlockingControl({
   blocking,
   onChange,
+  blocked,
+  blockedPct,
+  hours,
+  logEnabled,
 }: {
   blocking: Blocking;
   onChange: (b: Blocking) => void;
+  blocked: number;
+  blockedPct: number;
+  hours: number;
+  logEnabled: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -34,14 +47,38 @@ export default function BlockingControl({
       ? new Date(blocking.pausedUntil).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
       : "";
 
+  const look = {
+    on: { Icon: ShieldCheck, title: "Protection active", tone: "text-ok", bg: "bg-ok/15", ring: "border-ok/30" },
+    paused: { Icon: ShieldAlert, title: `Protection en pause jusqu'à ${until}`, tone: "text-warn", bg: "bg-warn/15", ring: "border-warn/40" },
+    off: { Icon: ShieldOff, title: "Protection désactivée", tone: "text-destructive", bg: "bg-destructive/15", ring: "border-destructive/40" },
+  }[blocking.mode];
+
+  const pct = blockedPct.toFixed(1).replace(".", ",");
+  const sentence =
+    blocking.mode === "on"
+      ? logEnabled
+        ? `${nf.format(blocked)} publicités et traqueurs bloqués sur ${period(hours)} (${pct} % des requêtes).`
+        : "Les publicités et traqueurs sont bloqués pour tout le réseau."
+      : blocking.mode === "paused"
+        ? "Rien n'est bloqué pendant la pause ; le blocage reprendra tout seul."
+        : "Rien n'est bloqué. Réactive la protection pour bloquer publicités et traqueurs.";
+
   return (
-    <section aria-label="Contrôle du blocage" className="flex flex-wrap items-center gap-x-3 gap-y-2 border-y py-2.5">
-      <span className="text-muted-foreground">Blocage</span>
-      {blocking.mode === "on" && <Badge variant="ok">actif</Badge>}
-      {blocking.mode === "off" && <Badge variant="destructive">désactivé</Badge>}
-      {blocking.mode === "paused" && <Badge variant="warn">en pause jusqu&apos;à {until}</Badge>}
-      <span className="flex-1" />
-      {error && <span className="text-sm text-destructive">{error}</span>}
+    <Card aria-label="Contrôle du blocage" className={cn("flex flex-col gap-4 p-5 sm:flex-row sm:items-center", look.ring)}>
+      <div className="flex flex-1 items-center gap-4">
+        <span className={cn("flex size-12 shrink-0 items-center justify-center rounded-full", look.bg, look.tone)}>
+          <look.Icon className="size-6" aria-hidden />
+        </span>
+        <div>
+          <p className={cn("text-lg font-semibold tracking-tight", look.tone)}>{look.title}</p>
+          <p className="mt-0.5 text-muted-foreground">{sentence}</p>
+          {error && (
+            <p role="alert" className="mt-1 text-sm text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+      </div>
       {blocking.mode === "on" ? (
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-xs text-muted-foreground">Pause</span>
@@ -55,10 +92,10 @@ export default function BlockingControl({
           </Button>
         </div>
       ) : (
-        <Button size="sm" disabled={busy} onClick={() => send("on")}>
-          Réactiver
+        <Button disabled={busy} onClick={() => send("on")}>
+          Réactiver la protection
         </Button>
       )}
-    </section>
+    </Card>
   );
 }

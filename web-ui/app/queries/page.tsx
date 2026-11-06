@@ -110,7 +110,7 @@ export default function Queries() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold tracking-tight">Journal</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Journal</h1>
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
             <span

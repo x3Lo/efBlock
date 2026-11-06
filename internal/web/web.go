@@ -68,7 +68,8 @@ type Server struct {
 	statsMu    sync.Mutex
 	statsCache map[int]cachedStats
 
-	upd updateState
+	upd  updateState
+	conn connectivityState
 }
 
 // New crée le serveur.
@@ -105,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/upstreams/test", s.auth(s.handleUpstreamsTest))
 	mux.HandleFunc("POST /api/password", s.auth(s.handlePassword))
 	mux.HandleFunc("POST /api/restart", s.auth(s.handleRestart))
+	mux.HandleFunc("GET /api/connectivity", s.auth(s.handleConnectivity))
 	mux.HandleFunc("GET /api/update", s.auth(s.handleUpdateInfo))
 	mux.HandleFunc("POST /api/update", s.auth(s.handleUpdateApply))
 	mux.HandleFunc("GET /api/allowlist", s.auth(s.handleDomains(store.Allow)))

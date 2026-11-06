@@ -1,9 +1,12 @@
 "use client";
 
+import { LayoutDashboard, ListFilter, LogOut, ScrollText, Settings, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import StatusIndicators from "@/components/status-indicators";
+import ThemeToggle from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, UNAUTHORIZED_EVENT } from "@/lib/api";
@@ -32,12 +35,23 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 }
 
 const links = [
-  { href: "/", label: "Tableau de bord" },
-  { href: "/queries/", label: "Journal" },
-  { href: "/filters/", label: "Filtres" },
-  { href: "/groups/", label: "Groupes" },
-  { href: "/settings/", label: "Réglages" },
+  { href: "/", label: "Tableau de bord", icon: LayoutDashboard },
+  { href: "/queries/", label: "Journal", icon: ScrollText },
+  { href: "/filters/", label: "Filtres", icon: ListFilter },
+  { href: "/groups/", label: "Groupes", icon: Users },
+  { href: "/settings/", label: "Réglages", icon: Settings },
 ];
+
+function Brand() {
+  return (
+    <div className="flex items-center gap-2 px-2">
+      <span className="flex size-7 items-center justify-center rounded-md bg-primary/15 text-primary">
+        <ShieldCheck className="size-4" aria-hidden />
+      </span>
+      <span className="text-base font-semibold tracking-tight">efBlock</span>
+    </div>
+  );
+}
 
 function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: () => void }) {
   const path = usePathname();
@@ -53,31 +67,50 @@ function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: ()
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
-      <aside className="flex shrink-0 flex-col gap-3 border-b bg-card px-3 py-3 md:sticky md:top-0 md:h-screen md:w-52 md:border-r md:border-b-0 md:py-4">
-        <div className="px-2 text-base font-semibold tracking-tight">efBlock</div>
-        <nav aria-label="Navigation principale" className="flex gap-0.5 md:flex-col">
-          {links.map((l) => (
-            <Link
-              key={l.href}
-              href={l.href}
-              aria-current={isCurrent(l.href) ? "page" : undefined}
-              className={cn(
-                "rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:text-foreground",
-                isCurrent(l.href) && "bg-muted font-medium text-foreground",
-              )}
-            >
-              {l.label}
-            </Link>
-          ))}
+      <aside className="sticky top-0 z-10 flex shrink-0 flex-col gap-3 border-b bg-card/95 px-3 py-3 backdrop-blur md:h-screen md:w-56 md:border-r md:border-b-0 md:bg-card md:py-5">
+        <div className="flex items-center justify-between gap-3 md:block">
+          <Brand />
+          <div className="flex items-center gap-1 md:hidden">
+            <ThemeToggle />
+            <Button variant="ghost" size="sm" onClick={logout} className="text-muted-foreground" title="Se déconnecter">
+              <LogOut className="size-4" aria-hidden />
+              <span className="sr-only">Se déconnecter</span>
+            </Button>
+          </div>
+        </div>
+        <nav aria-label="Navigation principale" className="-mx-1 flex gap-1 overflow-x-auto px-1 md:mx-0 md:mt-3 md:flex-col md:overflow-visible md:px-0">
+          {links.map((l) => {
+            const Icon = l.icon;
+            const current = isCurrent(l.href);
+            return (
+              <Link
+                key={l.href}
+                href={l.href}
+                aria-current={current ? "page" : undefined}
+                className={cn(
+                  "flex shrink-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                  current && "bg-primary/15 font-medium text-primary hover:bg-primary/20 hover:text-primary",
+                )}
+              >
+                <Icon className="size-4 shrink-0" aria-hidden />
+                {l.label}
+              </Link>
+            );
+          })}
         </nav>
-        <div className="ml-auto md:mt-auto md:ml-0">
-          <Button variant="ghost" size="sm" onClick={logout} className="text-muted-foreground">
-            Se déconnecter
-          </Button>
+        <div className="md:mt-auto md:flex md:flex-col md:gap-2">
+          <StatusIndicators />
+          <div className="hidden flex-col md:flex">
+            <ThemeToggle />
+            <Button variant="ghost" size="sm" onClick={logout} className="justify-start gap-2 text-muted-foreground">
+              <LogOut className="size-4" aria-hidden />
+              Se déconnecter
+            </Button>
+          </div>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 px-4 py-5 md:px-8 md:py-6">
-        <div className="mx-auto max-w-5xl">{children}</div>
+      <main className="min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">
+        <div className="mx-auto max-w-6xl">{children}</div>
       </main>
     </div>
   );
@@ -104,8 +137,17 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return (
-    <div className="mx-auto mt-[16vh] w-full max-w-xs px-4">
-      <h1 className="mb-6 text-lg font-semibold tracking-tight">efBlock</h1>
+    <div className="mx-auto mt-[14vh] w-full max-w-sm px-4">
+      <div className="rounded-xl border bg-card p-6 shadow-sm">
+      <div className="mb-6 flex items-center gap-3">
+        <span className="flex size-10 items-center justify-center rounded-lg bg-primary/15 text-primary">
+          <ShieldCheck className="size-5" aria-hidden />
+        </span>
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">efBlock</h1>
+          <p className="text-xs text-muted-foreground">Bloqueur de publicités pour tout le réseau</p>
+        </div>
+      </div>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <label className="flex flex-col gap-1.5">
           <span className="text-xs text-muted-foreground">Mot de passe</span>
@@ -125,6 +167,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
         )}
         <Button disabled={busy || !password}>{busy ? "Connexion…" : "Se connecter"}</Button>
       </form>
+      </div>
     </div>
   );
 }

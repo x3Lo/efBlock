@@ -10,10 +10,12 @@ export default function ConfirmButton({
   onConfirm,
   label = "Retirer",
   ariaLabel,
+  variant = "ghost",
 }: {
   onConfirm: () => void;
   label?: string;
   ariaLabel?: string;
+  variant?: "ghost" | "default" | "outline"; // aspect avant confirmation
 }) {
   const [armed, setArmed] = useState(false);
 
@@ -25,7 +27,7 @@ export default function ConfirmButton({
 
   return (
     <Button
-      variant={armed ? "destructive" : "ghost"}
+      variant={armed ? "destructive" : variant}
       size="sm"
       aria-label={ariaLabel}
       onClick={() => (armed ? onConfirm() : setArmed(true))}

@@ -88,7 +88,7 @@ export default function UpdateSection() {
   }, []);
 
   return (
-    <section className="max-w-2xl border-t pt-5">
+    <section className="max-w-3xl rounded-xl border bg-card p-5">
       <h2 className="mb-1 text-sm font-semibold">Mises à jour</h2>
       <p className="mb-3 text-muted-foreground">
         efBlock vérifie la dernière version publiée sur GitHub. Ta configuration, ton mot de passe, tes listes et ton journal sont conservés.
@@ -122,8 +122,8 @@ export default function UpdateSection() {
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
-          {info?.newer && info.can_apply && <ConfirmButton label={`Mettre à jour vers ${info.latest}`} onConfirm={apply} />}
-          <Button variant="ghost" size="sm" disabled={busy} onClick={() => load(true)}>
+          {info?.newer && info.can_apply && <ConfirmButton variant="default" label={`Mettre à jour vers ${info.latest}`} onConfirm={apply} />}
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => load(true)}>
             Vérifier maintenant
           </Button>
           {info && !info.newer && !info.error && info.latest && <span className="text-sm text-muted-foreground">efBlock est à jour.</span>}
