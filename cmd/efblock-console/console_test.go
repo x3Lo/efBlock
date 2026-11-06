@@ -250,17 +250,18 @@ func TestLatestReleaseErrors(t *testing.T) {
 // GitHub renvoie les versions de la plus récente à la plus ancienne : on prend la première utilisable.
 func TestLatestReleaseSelection(t *testing.T) {
 	list := `[
-		{"tag_name":"v2.0.0","draft":true,"prerelease":false},
-		{"tag_name":"v1.9.0","draft":false,"prerelease":true},
-		{"tag_name":"v1.8.0","draft":false,"prerelease":false},
-		{"tag_name":"v1.7.0","draft":false,"prerelease":false}]`
+		{"tag_name":"v2.0.0","draft":true,"prerelease":false,"assets":[{"name":"efblock_1_amd64.deb","browser_download_url":"x"},{"name":"SHA256SUMS","browser_download_url":"y"}]},
+		{"tag_name":"v1.9.5","draft":false,"prerelease":true},
+		{"tag_name":"v1.9.0","draft":false,"prerelease":true,"assets":[{"name":"efblock_1_amd64.deb","browser_download_url":"x"},{"name":"SHA256SUMS","browser_download_url":"y"}]},
+		{"tag_name":"v1.8.0","draft":false,"prerelease":false,"assets":[{"name":"efblock_1_amd64.deb","browser_download_url":"x"},{"name":"SHA256SUMS","browser_download_url":"y"}]},
+		{"tag_name":"v1.7.0","draft":false,"prerelease":false,"assets":[{"name":"efblock_1_amd64.deb","browser_download_url":"x"},{"name":"SHA256SUMS","browser_download_url":"y"}]}]`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(list)) }))
 	defer srv.Close()
 	ctx := context.Background()
 
 	r, err := latestRelease(ctx, srv.Client(), srv.URL, true)
 	if err != nil || r.TagName != "v1.9.0" {
-		t.Errorf("pré-versions acceptées : %q %v, attendu v1.9.0 (jamais le brouillon v2.0.0)", r.TagName, err)
+		t.Errorf("pré-versions acceptées : %q %v, attendu v1.9.0 (ni le brouillon v2.0.0, ni v1.9.5 sans paquet)", r.TagName, err)
 	}
 	r, err = latestRelease(ctx, srv.Client(), srv.URL, false)
 	if err != nil || r.TagName != "v1.8.0" {
@@ -269,7 +270,7 @@ func TestLatestReleaseSelection(t *testing.T) {
 
 	// Le cas réel d'aujourd'hui : il n'existe que des pré-versions (0.x).
 	only := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"tag_name":"v0.1.0","draft":false,"prerelease":true}]`))
+		w.Write([]byte(`[{"tag_name":"v0.1.0","draft":false,"prerelease":true,"assets":[{"name":"efblock_1_amd64.deb","browser_download_url":"x"},{"name":"SHA256SUMS","browser_download_url":"y"}]}]`))
 	}))
 	defer only.Close()
 	if r, err := latestRelease(ctx, only.Client(), only.URL, true); err != nil || r.TagName != "v0.1.0" {
