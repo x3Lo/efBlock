@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -376,5 +377,41 @@ func TestFirstBoot(t *testing.T) {
 	firstBoot(ui)
 	if fi, _ := ui.out.Stat(); fi.Size() != 0 {
 		t.Error("les questions ont été reposées")
+	}
+}
+
+// Régression : l'écran de bienvenue doit s'afficher tout de suite, sans attendre une touche
+// (un Peek bloquant laissait l'écran noir avec un simple curseur au premier démarrage).
+func TestFirstBootAffichageImmediat(t *testing.T) {
+	dir := t.TempDir()
+	firstBootFile = filepath.Join(dir, "marqueur")
+	out, err := os.CreateTemp(dir, "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, pw := io.Pipe() // entrée ouverte mais silencieuse, comme un clavier auquel on ne touche pas
+	ui := &UI{in: bufio.NewReader(pr), out: out}
+	done := make(chan struct{})
+	go func() { firstBoot(ui); close(done) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		b, _ := os.ReadFile(out.Name())
+		if strings.Contains(string(b), "Bienvenue") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("rien affiché tant qu'aucune touche n'est tapée")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	pw.Close() // l'entrée se ferme : fin propre, sans marqueur
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("firstBoot ne se termine pas à la fermeture de l'entrée")
+	}
+	if _, err := os.Stat(firstBootFile); err == nil {
+		t.Error("marqueur écrit alors que l'entrée s'est fermée")
 	}
 }
