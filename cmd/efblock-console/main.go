@@ -75,6 +75,7 @@ func main() {
 type UI struct {
 	in  *bufio.Reader
 	out *os.File
+	eof bool // l'entrée s'est fermée pendant une question
 }
 
 func (u *UI) printf(format string, a ...any) { fmt.Fprintf(u.out, format, a...) }
@@ -88,6 +89,7 @@ func (u *UI) ask(prompt, def string) (string, bool) {
 	}
 	line, err := u.in.ReadString('\n')
 	if err != nil && line == "" {
+		u.eof = true
 		return "", false
 	}
 	line = strings.TrimSpace(line)
@@ -104,6 +106,7 @@ func (u *UI) confirm(prompt string) bool {
 		u.printf("%s (oui/non) [non] : ", prompt)
 		line, err := u.in.ReadString('\n')
 		if err != nil && line == "" {
+			u.eof = true
 			return false
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
@@ -122,6 +125,7 @@ func (u *UI) confirmYes(prompt string) bool {
 		u.printf("%s (oui/non) [oui] : ", prompt)
 		line, err := u.in.ReadString('\n')
 		if err != nil && line == "" {
+			u.eof = true
 			return false
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
