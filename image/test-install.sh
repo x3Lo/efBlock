@@ -132,11 +132,12 @@ boot_logs() {
 	echo "----------------------------------------"
 }
 
-# 4. Démarrage du système installé (toujours sans internet) et vérification du DNS.
+# 4. Démarrage du système installé et vérification du DNS. L'absence d'internet a déjà été testée
+# pendant l'installation ; ici, le réseau isolé de QEMU empêcherait la redirection de port vers la VM.
 echo "==> démarrage du système installé"
 qemu-system-x86_64 "${ACCEL[@]}" -m 1024 -smp 2 -nographic \
 	-drive file="$DISK",format=raw,if=virtio \
-	-nic user,model=virtio-net-pci,restrict=on,hostfwd=udp:127.0.0.1:10053-:53,hostfwd=tcp:127.0.0.1:10053-:53 \
+	-nic user,model=virtio-net-pci,hostfwd=udp:127.0.0.1:10053-:53,hostfwd=tcp:127.0.0.1:10053-:53 \
 	>"$OUT/demarrage.log" 2>&1 </dev/null &
 QPID=$!
 trap 'kill $QPID 2>/dev/null || true' EXIT
@@ -150,6 +151,7 @@ for _ in $(seq 1 "$BOOT_TIMEOUT"); do
 	sleep 1
 done
 if [[ -z $ok ]]; then
+	echo "--- dernière réponse de dig ---"; dig +time=2 +tries=1 @127.0.0.1 -p 10053 -x 192.168.1.1 2>&1 | tail -15
 	kill $QPID 2>/dev/null || true; wait $QPID 2>/dev/null || true; trap - EXIT
 	boot_logs
 	fail "le serveur DNS d'efBlock ne répond pas après le démarrage"
