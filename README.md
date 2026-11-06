@@ -379,6 +379,7 @@ make build       # compile le binaire
 make ui          # recompile l'interface Next.js (nécessite Node 22) et l'embarque
 make deb         # construit le paquet Debian dans dist/
 make iso         # construit l'ISO d'installation dans dist/ (xorriso requis)
+image/test-install.sh dist/efblock-*.iso  # l'installe dans une VM sans internet et vérifie qu'efBlock répond (qemu)
 ```
 
 ```
