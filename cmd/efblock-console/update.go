@@ -34,6 +34,20 @@ type Release struct {
 	} `json:"assets"`
 }
 
+// hasPackage : la publication contient au moins un paquet .deb et son SHA256SUMS.
+func (r Release) hasPackage() bool {
+	deb, sums := false, false
+	for _, a := range r.Assets {
+		switch {
+		case a.Name == "SHA256SUMS":
+			sums = true
+		case strings.HasSuffix(a.Name, ".deb"):
+			deb = true
+		}
+	}
+	return deb && sums
+}
+
 // latestRelease interroge l'API GitHub et retourne la publication la plus récente utilisable :
 // jamais un brouillon, et une pré-version seulement si allowPre est vrai.
 func latestRelease(ctx context.Context, c *http.Client, api string, allowPre bool) (Release, error) {
@@ -56,8 +70,8 @@ func latestRelease(ctx context.Context, c *http.Client, api string, allowPre boo
 		return Release{}, fmt.Errorf("réponse GitHub inattendue : %w", err)
 	}
 	for _, r := range rels { // GitHub les renvoie de la plus récente à la plus ancienne
-		if r.Draft || r.TagName == "" || (r.Prerelease && !allowPre) {
-			continue
+		if r.Draft || r.TagName == "" || (r.Prerelease && !allowPre) || !r.hasPackage() {
+			continue // une publication sans paquet (construction ratée) n'est pas une mise à jour
 		}
 		return r, nil
 	}

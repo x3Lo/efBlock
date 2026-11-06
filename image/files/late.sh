@@ -12,12 +12,12 @@ cp "$DEB" /target/tmp/efblock.deb
 in-target dpkg -i /tmp/efblock.deb || echo "ERREUR : installation du paquet efBlock"
 rm -f /target/tmp/efblock.deb
 
-# --- Kit hors ligne : outils (dig, curl, nano, ping, heure, certificats) installés depuis l'ISO ---
+# --- Kit hors ligne : outils (dig, curl, nano, ping, certificats) installés depuis l'ISO ---
 # Le kit est aussi copié sur le disque (serveur SSH inclus) : la console l'utilise sans internet.
 if [ -d /cdrom/efblock/kit ]; then
     mkdir -p /target/usr/share/efblock
     cp -r /cdrom/efblock/kit /target/usr/share/efblock/kit
-    if in-target sh -c 'dpkg -i /usr/share/efblock/kit/base/*.deb'; then
+    if in-target sh -c 'dpkg -i --skip-same-version /usr/share/efblock/kit/base/*.deb'; then
         echo "kit : outils installés"
     else
         echo "AVERTISSEMENT : installation du kit incomplète"

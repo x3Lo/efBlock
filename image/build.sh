@@ -70,18 +70,7 @@ if [[ -z $KIT ]]; then
 		KIT="dist/kit"
 		rm -rf "$KIT"; mkdir -p "$KIT"
 		echo "==> téléchargement du kit de paquets Debian"
-		docker run --rm -v "$PWD/$KIT:/out" debian:stable bash -s <<'KITSCRIPT'
-set -e
-apt-get update -qq
-dl() { # dl <dossier> <paquets...> : télécharge les paquets et leurs dépendances, sans les installer
-	d=$1; shift
-	mkdir -p "/out/$d/partial"
-	apt-get install -y --no-install-recommends --download-only -o "Dir::Cache::archives=/out/$d" "$@" >/dev/null
-	rm -rf "/out/$d/partial" "/out/$d/lock"
-}
-dl base ca-certificates systemd-timesyncd bind9-dnsutils iproute2 iputils-ping less nano curl
-dl ssh openssh-server
-KITSCRIPT
+		image/kit.sh "$KIT"
 	else
 		echo "avertissement : docker indisponible : l'ISO sera construite SANS le kit de paquets (outils et serveur SSH absents hors ligne)" >&2
 		KIT=""
