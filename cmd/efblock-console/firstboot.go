@@ -20,7 +20,7 @@ func firstBoot(ui *UI) {
 		return
 	}
 	ui.clear()
-	ui.printf("Bienvenue dans efBlock\n----------------------\n\nL'installation est terminée. Quelques questions pour finir la configuration.\nRéponds par oui ou par non, puis appuie sur Entrée (Entrée seule = la réponse entre crochets).\n\n")
+	ui.printf("Bienvenue dans efBlock\n----------------------\n\nL'installation est terminée. Quelques questions pour finir la configuration.\nRéponds par y (oui) ou n (non), puis Entrée. Entrée seule = la lettre en majuscule.\n\n")
 
 	if ui.confirmYes("Choisir maintenant le mot de passe de l'interface web ?") {
 		ui.printf("\n8 caractères au moins.\n\n")

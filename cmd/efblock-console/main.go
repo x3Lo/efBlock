@@ -103,7 +103,7 @@ func (u *UI) ask(prompt, def string) (string, bool) {
 // « oui » ou « non » (Entrée seule = non). Retourne false si l'entrée est fermée.
 func (u *UI) confirm(prompt string) bool {
 	for {
-		u.printf("%s (oui/non) [non] : ", prompt)
+		u.printf("%s (y/N) : ", prompt)
 		line, err := u.in.ReadString('\n')
 		if err != nil && line == "" {
 			u.eof = true
@@ -115,14 +115,14 @@ func (u *UI) confirm(prompt string) bool {
 		case "o", "oui", "y", "yes":
 			return true
 		}
-		u.printf("Réponds par oui ou par non.\n")
+		u.printf("Réponds par y (oui) ou n (non).\n")
 	}
 }
 
 // confirmYes est comme confirm, mais Entrée seule = oui.
 func (u *UI) confirmYes(prompt string) bool {
 	for {
-		u.printf("%s (oui/non) [oui] : ", prompt)
+		u.printf("%s (Y/n) : ", prompt)
 		line, err := u.in.ReadString('\n')
 		if err != nil && line == "" {
 			u.eof = true
@@ -134,7 +134,7 @@ func (u *UI) confirmYes(prompt string) bool {
 		case "n", "non", "no":
 			return false
 		}
-		u.printf("Réponds par oui ou par non.\n")
+		u.printf("Réponds par y (oui) ou n (non).\n")
 	}
 }
 

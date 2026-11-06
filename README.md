@@ -64,7 +64,7 @@ Une image qui installe un Debian minimal avec efBlock déjà en place, sur le mo
    Debian te demande ensuite la langue, le pays et le clavier (Français, France, clavier français pour de l'AZERTY).
 3. La machine redémarre. Un **menu s'affiche sur son écran** : il indique l'adresse de l'interface web, et te propose de régler le
    réseau (DHCP ou adresse fixe) et de **choisir le mot de passe** (option 2). C'est tout.
-   Au tout premier démarrage, quelques questions oui/non terminent l'installation : mot de passe de l'interface web et, si tu le
+   Au tout premier démarrage, quelques questions (y/N) terminent l'installation : mot de passe de l'interface web et, si tu le
    souhaites, **serveur SSH** (administration depuis un autre poste ; il autorise `root` par mot de passe, à retirer en production
    en supprimant `/etc/ssh/sshd_config.d/00-efblock.conf`).
 
