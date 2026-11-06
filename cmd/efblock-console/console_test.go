@@ -424,6 +424,9 @@ func TestApplyUpdate(t *testing.T) {
 	updateStatusFile = filepath.Join(dir, "etat")
 	updateLogFile = filepath.Join(dir, "journal")
 	defer func(f func(*UI, bool) error) { runUpdateFn = f }(runUpdateFn)
+	restarted := 0
+	defer func(f func()) { restartConsoleFn = f }(restartConsoleFn)
+	restartConsoleFn = func() { restarted++ }
 	read := func() map[string]string {
 		var m map[string]string
 		b, err := os.ReadFile(updateStatusFile)
@@ -457,6 +460,9 @@ func TestApplyUpdate(t *testing.T) {
 	if m := read(); m["state"] != "ok" {
 		t.Errorf("état final : %v", m)
 	}
+	if restarted != 1 {
+		t.Errorf("l'écran de la machine doit être relancé après une mise à jour réussie (%d)", restarted)
+	}
 	if b, _ := os.ReadFile(updateLogFile); !strings.Contains(string(b), "ligne de journal") {
 		t.Errorf("journal : %q", b)
 	}
@@ -468,5 +474,36 @@ func TestApplyUpdate(t *testing.T) {
 	}
 	if m := read(); m["state"] != "failed" || !strings.Contains(m["message"], "empreinte") {
 		t.Errorf("état après échec : %v", m)
+	}
+	if restarted != 1 {
+		t.Errorf("l'écran ne doit pas être relancé après un échec (%d)", restarted)
+	}
+}
+
+// Après une mise à jour, le fichier du programme est remplacé (nouveau fichier renommé par-dessus) :
+// le menu doit s'en apercevoir pour afficher la bonne version.
+func TestBinaryReplaced(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "efblock-console")
+	os.WriteFile(exe, []byte("v1"), 0o755)
+	start, _ := os.Stat(exe)
+
+	if binaryReplaced(exe, start) {
+		t.Error("fichier inchangé : pas de remplacement")
+	}
+	os.WriteFile(exe, []byte("v1 modifié sur place"), 0o755) // même fichier
+	if binaryReplaced(exe, start) {
+		t.Error("réécriture sur place : même fichier")
+	}
+	// dpkg : nouveau fichier écrit à côté puis renommé par-dessus
+	os.WriteFile(exe+".dpkg-new", []byte("v2"), 0o755)
+	if err := os.Rename(exe+".dpkg-new", exe); err != nil {
+		t.Fatal(err)
+	}
+	if !binaryReplaced(exe, start) {
+		t.Error("remplacement par renommage non détecté : l'ancienne version resterait affichée")
+	}
+	if binaryReplaced("", start) || binaryReplaced(exe, nil) || binaryReplaced(filepath.Join(dir, "absent"), start) {
+		t.Error("cas sans information : jamais de relance")
 	}
 }
