@@ -98,3 +98,29 @@ func TestPauseResumesByItself(t *testing.T) {
 		t.Error("Resume doit réactiver le blocage")
 	}
 }
+
+// On colle souvent une adresse complète dans le champ « domaine » : seul le nom compte.
+func TestDomainFromInput(t *testing.T) {
+	ok := map[string]string{
+		"exemple.com":                             "exemple.com",
+		"  Pub.Exemple.COM  ":                     "pub.exemple.com",
+		"https://www.youtube.com/watch?v=abc":     "www.youtube.com",
+		"http://ads.exemple.com:8080/banniere.js": "ads.exemple.com",
+		"exemple.com/pub/":                        "exemple.com",
+		"exemple.com:443":                         "exemple.com",
+		"*.traqueur.net":                          "traqueur.net",
+		"https://user:mdp@pub.exemple.com/x":      "pub.exemple.com",
+		"exemple.com.":                            "exemple.com",
+		"https://exemple.com#ancre":               "exemple.com",
+	}
+	for in, want := range ok {
+		if got, valid := DomainFromInput(in); !valid || got != want {
+			t.Errorf("%q : %q %v, attendu %q", in, got, valid, want)
+		}
+	}
+	for _, in := range []string{"", "https://", "com", "192.168.1.1", "http://192.168.1.1/x", "pas un domaine", "[::1]:53"} {
+		if got, valid := DomainFromInput(in); valid {
+			t.Errorf("%q ne doit pas être accepté (obtenu %q)", in, got)
+		}
+	}
+}

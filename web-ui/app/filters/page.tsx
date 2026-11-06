@@ -292,7 +292,7 @@ function DomainList({
       <form className="flex gap-2 px-4" onSubmit={add}>
         <Input
           type="text"
-          placeholder="exemple.com"
+          placeholder="exemple.com ou une adresse copiée"
           aria-label={`Domaine à ajouter à la ${title.toLowerCase()}`}
           value={domain}
           onChange={(e) => setDomain(e.target.value)}
