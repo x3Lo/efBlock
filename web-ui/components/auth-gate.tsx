@@ -53,7 +53,7 @@ function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: ()
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
-      <aside className="flex shrink-0 flex-col gap-3 border-b bg-card px-3 py-3 md:min-h-screen md:w-52 md:border-r md:border-b-0 md:py-4">
+      <aside className="flex shrink-0 flex-col gap-3 border-b bg-card px-3 py-3 md:sticky md:top-0 md:h-screen md:w-52 md:border-r md:border-b-0 md:py-4">
         <div className="px-2 text-base font-semibold tracking-tight">efBlock</div>
         <nav aria-label="Navigation principale" className="flex gap-0.5 md:flex-col">
           {links.map((l) => (

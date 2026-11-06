@@ -19,11 +19,8 @@ func firstBoot(ui *UI) {
 	if _, err := os.Stat(firstBootFile); err == nil {
 		return
 	}
-	if _, err := ui.in.Peek(1); err != nil {
-		return // pas d'entrée (écran absent) : on proposera au prochain démarrage
-	}
 	ui.clear()
-	ui.printf("Bienvenue dans efBlock\n----------------------\n\nL'installation est terminée. Quelques questions pour finir la configuration.\n\n")
+	ui.printf("Bienvenue dans efBlock\n----------------------\n\nL'installation est terminée. Quelques questions pour finir la configuration.\nRéponds par y (oui) ou n (non), puis Entrée. Entrée seule = la lettre en majuscule.\n\n")
 
 	if ui.confirmYes("Choisir maintenant le mot de passe de l'interface web ?") {
 		ui.printf("\n8 caractères au moins.\n\n")
@@ -40,6 +37,9 @@ func firstBoot(ui *UI) {
 		installSSH(ui)
 	}
 
+	if ui.eof {
+		return // entrée fermée (pas d'écran) : on reposera les questions au prochain démarrage
+	}
 	if err := os.MkdirAll(filepath.Dir(firstBootFile), 0o755); err == nil {
 		_ = os.WriteFile(firstBootFile, []byte("ok\n"), 0o644)
 	}
