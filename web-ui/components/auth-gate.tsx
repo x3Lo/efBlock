@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import StatusIndicators from "@/components/status-indicators";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, UNAUTHORIZED_EVENT } from "@/lib/api";
@@ -70,8 +71,9 @@ function Shell({ children, onLogout }: { children: React.ReactNode; onLogout: ()
             </Link>
           ))}
         </nav>
-        <div className="ml-auto md:mt-auto md:ml-0">
-          <Button variant="ghost" size="sm" onClick={logout} className="text-muted-foreground">
+        <div className="ml-auto flex items-center gap-3 md:mt-auto md:ml-0 md:flex-col md:items-stretch md:gap-3">
+          <StatusIndicators />
+          <Button variant="ghost" size="sm" onClick={logout} className="justify-start text-muted-foreground">
             Se déconnecter
           </Button>
         </div>
