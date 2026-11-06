@@ -88,7 +88,7 @@ trap 'sudo umount "$OUT/mnt" 2>/dev/null || true; sudo losetup -d "$LOOP" 2>/dev
 mkdir -p "$OUT/mnt"
 ROOT=""
 for p in "$LOOP"p*; do
-	if sudo mount -o ro "$p" "$OUT/mnt" 2>/dev/null; then
+	if sudo mount "$p" "$OUT/mnt" 2>/dev/null; then
 		if [[ -f "$OUT/mnt/etc/debian_version" ]]; then ROOT="$p"; break; fi
 		sudo umount "$OUT/mnt"
 	fi
@@ -112,13 +112,31 @@ done
 sudo grep -q '^root:!' "$M/etc/shadow" || fail "le compte root n'est pas verrouillé (mot de passe d'installation utilisable)"
 echo "    compte root : verrouillé (mot de passe à choisir au premier usage)"
 [[ -f "$M/usr/share/efblock/kit/ssh/"openssh-server_*.deb ]] || ls "$M"/usr/share/efblock/kit/ssh/openssh-server_*.deb >/dev/null 2>&1 || fail "kit SSH absent du disque"
+# Disque de test seulement : journal système persistant, pour lire les journaux du démarrage
+# en cas d'échec (on ne peut pas se connecter : root est verrouillé).
+sudo mkdir -p "$M/var/log/journal"
 sudo umount "$M"; sudo losetup -d "$LOOP"; trap - EXIT
+
+# Journaux du système installé (après un démarrage raté) : efBlock, réseau, et adresses.
+boot_logs() {
+	echo "----- journaux du système installé -----"
+	local loop; loop="$(sudo losetup -P --find --show "$DISK")"
+	if sudo mount -o ro "${loop}p1" "$OUT/mnt" 2>/dev/null; then
+		sudo journalctl -D "$OUT/mnt/var/log/journal" --no-pager -o short-monotonic \
+			-u efblock -u systemd-networkd -u efblock-resolv 2>&1 | tail -60
+		echo "--- /etc/systemd/network ---"; sudo sh -c "head -20 $OUT/mnt/etc/systemd/network/*.network" 2>&1
+		echo "--- /etc/efblock/config.yaml (écoute) ---"; sudo grep -n "listen" "$OUT/mnt/etc/efblock/config.yaml" 2>&1
+		sudo umount "$OUT/mnt"
+	fi
+	sudo losetup -d "$loop"
+	echo "----------------------------------------"
+}
 
 # 4. Démarrage du système installé (toujours sans internet) et vérification du DNS.
 echo "==> démarrage du système installé"
 qemu-system-x86_64 "${ACCEL[@]}" -m 1024 -smp 2 -nographic \
 	-drive file="$DISK",format=raw,if=virtio \
-	-nic user,model=virtio-net-pci,restrict=on,hostfwd=udp:127.0.0.1:5353-:53,hostfwd=tcp:127.0.0.1:5353-:53 \
+	-nic user,model=virtio-net-pci,restrict=on,hostfwd=udp:127.0.0.1:10053-:53,hostfwd=tcp:127.0.0.1:10053-:53 \
 	>"$OUT/demarrage.log" 2>&1 </dev/null &
 QPID=$!
 trap 'kill $QPID 2>/dev/null || true' EXIT
@@ -126,12 +144,16 @@ ok=""
 for _ in $(seq 1 "$BOOT_TIMEOUT"); do
 	# Une recherche inverse d'adresse privée reçoit toujours sa réponse d'efBlock lui-même, tout de suite
 	# (ces noms ne partent jamais sur internet) : une réponse prouve qu'efBlock tourne et répond.
-	if out="$(dig +time=2 +tries=1 @127.0.0.1 -p 5353 -x 192.168.1.1 2>/dev/null)" && grep -q "status:" <<<"$out"; then
+	if out="$(dig +time=2 +tries=1 @127.0.0.1 -p 10053 -x 192.168.1.1 2>/dev/null)" && grep -q "status:" <<<"$out"; then
 		ok="$out"; break
 	fi
 	sleep 1
 done
-[[ -n $ok ]] || { tail -30 "$OUT/demarrage.log" >&2; fail "le serveur DNS d'efBlock ne répond pas après le démarrage"; }
+if [[ -z $ok ]]; then
+	kill $QPID 2>/dev/null || true; wait $QPID 2>/dev/null || true; trap - EXIT
+	boot_logs
+	fail "le serveur DNS d'efBlock ne répond pas après le démarrage"
+fi
 echo "    DNS : $(grep -o 'status: [A-Z]*' <<<"$ok")"
 kill $QPID 2>/dev/null || true; trap - EXIT
 echo "==> réussi : l'ISO s'installe sans internet et efBlock répond"
