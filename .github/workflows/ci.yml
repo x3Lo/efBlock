@@ -18,7 +18,7 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: Scripts (syntaxe)
         run: |
-          for f in deploy/install.sh packaging/build-deb.sh packaging/postinst packaging/prerm packaging/postrm image/build.sh; do bash -n "$f"; done
+          for f in deploy/install.sh packaging/build-deb.sh packaging/postinst packaging/prerm packaging/postrm image/build.sh image/kit.sh; do bash -n "$f"; done
           sh -n image/files/late.sh
       - run: go vet ./...
       - run: go test -race ./...
@@ -43,3 +43,13 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+
+  kit:
+    name: Kit de paquets hors ligne (téléchargement)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Télécharger le kit
+        run: image/kit.sh dist/kit
+      - name: Contenu
+        run: find dist/kit -name '*.deb' | sort | sed 's#.*/##' | head -80
