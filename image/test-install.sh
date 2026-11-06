@@ -40,16 +40,21 @@ truncate -s 8G "$DISK"
 echo "==> installation (sans internet, $INSTALL_TIMEOUT s au plus)"
 # Question restée à l'écran (titre « [!!] ... » de l'installateur), pour un message d'échec lisible.
 last_question() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$OUT/installation.log" | grep -ao '\[!!\] [^(]*' | tail -1 | sed 's/ *$//'; }
-# Texte du dernier écran (sans les codes de couleur ni les cadres), affiché dans le journal de la CI.
+# Texte du dernier écran : tout ce qui suit le dernier titre « [!!] », sans codes de couleur, sans
+# cadres et sans la barre d'état (horloge), affiché dans le journal de la CI.
 last_screen() {
 	echo "----- dernier écran de l'installateur -----"
-	sed 's/\x1b\[[0-9;?]*[A-Za-z]/\n/g; s/\x1b[()][0-9A-Za-z]//g' "$OUT/installation.log" | tr -d '\r' |
-		tr -s ' ' | grep -av '^ *$' | grep -avE '^[lqkxmjtuw ]+$' | tail -60
+	sed 's/\x1b\[[0-9;?]*[A-Za-z]/\n/g; s/\x1b[()][0-9A-Za-z]//g' "$OUT/installation.log" | tr -d '\r' | tr -s ' ' |
+		awk '/\[!!\]/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' |
+		grep -avE '^ *$|^[][() ]*$|installer|shell|^ *[A-Z][a-z][a-z] [0-9][0-9] *$|^ *[0-9][0-9]:[0-9][0-9] *$|^[lqkxmjtuw ]+$' | head -40
 	echo "-------------------------------------------"
 }
-# Taille « utile » du journal : sans les codes d'écran ni l'horloge de la barre d'état, qui change
-# chaque minute même quand l'installateur attend une réponse.
-useful_size() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/[0-9][0-9]:[0-9][0-9]//g' "$OUT/installation.log" 2>/dev/null | tr -d ' \n\r' | wc -c; }
+# Taille « utile » du journal : seulement les lettres, sans la barre d'état (horloge, onglets), qui est
+# redessinée chaque minute même quand l'installateur attend une réponse.
+useful_size() {
+	sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$OUT/installation.log" 2>/dev/null |
+		sed -E 's/installer|shell|log|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)//g' | tr -cd 'A-Za-z' | wc -c
+}
 
 qemu-system-x86_64 "${ACCEL[@]}" -m 2048 -smp 2 -no-reboot -nographic \
 	-drive file="$DISK",format=raw,if=virtio \
