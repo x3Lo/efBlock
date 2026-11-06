@@ -1,3 +1,4 @@
+import { Card, CardHeader } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { nf, Rank } from "@/lib/api";
 
@@ -7,18 +8,21 @@ export default function TopTable({
   rows,
   empty = "Rien sur cette période.",
   action,
+  icon,
 }: {
   title: string;
   rows: Rank[];
   empty?: string;
   action?: (name: string) => React.ReactNode;
+  icon?: React.ComponentType<{ className?: string }>;
 }) {
   return (
-    <section>
-      <h2 className="mb-1 text-sm font-semibold">{title}</h2>
+    <Card>
+      <CardHeader title={title} icon={icon} />
       {rows.length === 0 ? (
-        <p className="py-3 text-muted-foreground">{empty}</p>
+        <p className="px-4 pt-1 pb-4 text-muted-foreground">{empty}</p>
       ) : (
+        <div className="px-2 pb-2">
         <Table>
           <TableBody>
             {rows.map((r) => (
@@ -39,7 +43,8 @@ export default function TopTable({
             ))}
           </TableBody>
         </Table>
+        </div>
       )}
-    </section>
+    </Card>
   );
 }

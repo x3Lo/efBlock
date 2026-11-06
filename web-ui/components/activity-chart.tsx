@@ -5,6 +5,9 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { ChartConfig, ChartContainer, ChartLegend, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Bucket, nf } from "@/lib/api";
 
+// Axe vertical court (« 6 k » plutôt que « 6000 ») : les grands nombres restent lisibles et ne sont plus coupés.
+const compact = new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 });
+
 const config = {
   allowed: { label: "Autorisées", color: "var(--chart-1)" },
   blocked: { label: "Bloquées", color: "var(--chart-2)" },
@@ -32,10 +35,10 @@ export default function ActivityChart({ data, hours }: { data: Bucket[]; hours: 
   return (
     <div>
       <ChartContainer config={config} className="aspect-auto h-52 w-full justify-start">
-        <BarChart data={rows} margin={{ top: 4, right: 0, bottom: 0, left: 0 }} barCategoryGap="12%">
+        <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 4 }} barCategoryGap="12%">
           <CartesianGrid vertical={false} />
           <XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={36} tickMargin={6} />
-          <YAxis width={36} tickLine={false} axisLine={false} allowDecimals={false} />
+          <YAxis width={44} tickLine={false} axisLine={false} allowDecimals={false} tickFormatter={(v: number) => compact.format(v)} />
           <ChartTooltip
             cursor
             content={

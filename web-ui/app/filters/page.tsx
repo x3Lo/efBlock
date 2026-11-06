@@ -1,12 +1,16 @@
 "use client";
 
+import { Check, ListFilter, Plus, RefreshCw, ShieldBan, ShieldCheck, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import ConfirmButton from "@/components/confirm-button";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, DomainEntry, fmtDateTime, ListsResponse, nf } from "@/lib/api";
+import { recommendedLists } from "@/lib/recommended-lists";
 
 type Msg = { error: boolean; text: string } | null;
 
@@ -16,23 +20,28 @@ export default function Filters() {
   const info = useCallback((text: string) => setMsg({ error: false, text }), []);
 
   return (
-    <div className="flex flex-col gap-8">
-      <h1 className="text-lg font-semibold tracking-tight">Filtres</h1>
+    <div className="flex flex-col gap-5">
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">Filtres</h1>
+        <p className="mt-1 text-muted-foreground">Ce qu&apos;efBlock bloque : des listes publiques mises à jour automatiquement, plus tes propres règles.</p>
+      </div>
       {msg && (
-        <p role={msg.error ? "alert" : "status"} className={`-mt-4 text-sm ${msg.error ? "text-destructive" : "text-muted-foreground"}`}>
+        <p role={msg.error ? "alert" : "status"} className={`text-sm ${msg.error ? "text-destructive" : "text-muted-foreground"}`}>
           {msg.text}
         </p>
       )}
       <FilterLists onError={fail} onInfo={info} />
-      <div className="grid gap-8 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2">
         <DomainList
           kind="allowlist"
+          icon={ShieldCheck}
           title="Allowlist"
-          help="Jamais bloqués, sous-domaines compris, même s'ils figurent dans une liste."
+          help="Jamais bloqués, sous-domaines compris, même s'ils figurent dans une liste. Utile si un site ou un jeu ne marche plus."
           onError={fail}
         />
         <DomainList
           kind="blocklist"
+          icon={ShieldBan}
           title="Blocklist"
           help="Toujours bloqués, sous-domaines compris, en plus des listes."
           onError={fail}
@@ -79,6 +88,19 @@ function FilterLists({ onError, onInfo }: { onError: (e: unknown) => void; onInf
     }
   }
 
+  async function addRecommended(n: string, u: string) {
+    setBusy(true);
+    try {
+      setData(await api<ListsResponse>("/api/lists", { method: "POST", body: { name: n, url: u } }));
+      onInfo(`${n} ajoutée, téléchargement en cours.`);
+      refreshSoon();
+    } catch (err) {
+      onError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove(u: string) {
     try {
       setData(await api<ListsResponse>(`/api/lists?url=${encodeURIComponent(u)}`, { method: "DELETE" }));
@@ -101,17 +123,56 @@ function FilterLists({ onError, onInfo }: { onError: (e: unknown) => void; onInf
     }
   }
 
-  return (
-    <section>
-      <div className="mb-1 flex flex-wrap items-center gap-3">
-        <h2 className="text-sm font-semibold">Listes de filtres</h2>
-        {data && <span className="text-xs text-muted-foreground">{nf.format(data.totalBlocked)} domaines au total</span>}
-        <span className="flex-1" />
-        <Button variant="outline" size="sm" disabled={busy} onClick={updateNow}>
-          Mettre à jour maintenant
-        </Button>
-      </div>
+  const added = new Set(data?.lists.map((l) => l.url) ?? []);
 
+  return (
+    <>
+    <Card>
+      <CardHeader title="Listes recommandées" icon={Sparkles} />
+      <p className="px-4 pb-3 text-xs text-muted-foreground">
+        Ajoute une liste en un clic. Une seule suffit pour commencer ; en ajouter plusieurs bloque davantage mais peut gêner certains sites.
+      </p>
+      <div className="grid gap-3 px-4 pb-4 sm:grid-cols-2 xl:grid-cols-3">
+        {recommendedLists.map((r) => {
+          const isAdded = added.has(r.url);
+          return (
+            <div key={r.url} className={`flex flex-col gap-2 rounded-lg border p-3 ${isAdded ? "border-ok/40 bg-ok/5" : "bg-background/40"}`}>
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{r.name}</span>
+                {r.recommended && <Badge variant="ok">conseillée</Badge>}
+              </div>
+              <p className="flex-1 text-xs text-muted-foreground">{r.description}</p>
+              {isAdded ? (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-ok">
+                  <Check className="size-3.5" aria-hidden /> Ajoutée
+                </span>
+              ) : (
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => addRecommended(r.name, r.url)} className="self-start">
+                  <Plus className="size-3.5" aria-hidden /> Ajouter
+                </Button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+
+    <Card>
+      <CardHeader
+        title={
+          <>
+            Tes listes
+            {data && <span className="ml-1 text-xs font-normal text-muted-foreground">{nf.format(data.totalBlocked)} domaines au total</span>}
+          </>
+        }
+        icon={ListFilter}
+        actions={
+          <Button variant="outline" size="sm" disabled={busy} onClick={updateNow}>
+            <RefreshCw className="size-3.5" aria-hidden /> Mettre à jour maintenant
+          </Button>
+        }
+      />
+      <div className="px-2">
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -143,14 +204,15 @@ function FilterLists({ onError, onInfo }: { onError: (e: unknown) => void; onInf
           {data && data.lists.length === 0 && (
             <TableRow>
               <TableCell colSpan={4} className="py-4 text-muted-foreground">
-                Aucune liste.
+                Aucune liste pour l&apos;instant : choisis-en une parmi les listes recommandées ci-dessus.
               </TableCell>
             </TableRow>
           )}
         </TableBody>
       </Table>
 
-      <form className="mt-3 flex flex-wrap gap-2" onSubmit={add}>
+      </div>
+      <form className="mt-1 flex flex-wrap gap-2 px-4" onSubmit={add}>
         <Input
           type="text"
           placeholder="Nom (facultatif)"
@@ -170,10 +232,11 @@ function FilterLists({ onError, onInfo }: { onError: (e: unknown) => void; onInf
         />
         <Button disabled={busy || !url}>Ajouter</Button>
       </form>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Formats acceptés : hosts (<code>0.0.0.0 domaine</code>), adblock (<code>||domaine^</code>), ou un domaine par ligne.
+      <p className="mt-2 px-4 pb-4 text-xs text-muted-foreground">
+        Autre liste : colle son adresse. Formats acceptés : hosts (<code>0.0.0.0 domaine</code>), adblock (<code>||domaine^</code>), ou un domaine par ligne.
       </p>
-    </section>
+    </Card>
+    </>
   );
 }
 
@@ -181,11 +244,13 @@ function DomainList({
   kind,
   title,
   help,
+  icon,
   onError,
 }: {
   kind: "allowlist" | "blocklist";
   title: string;
   help: string;
+  icon: React.ComponentType<{ className?: string }>;
   onError: (e: unknown) => void;
 }) {
   const [entries, setEntries] = useState<DomainEntry[]>([]);
@@ -221,10 +286,10 @@ function DomainList({
   }
 
   return (
-    <section>
-      <h2 className="text-sm font-semibold">{title}</h2>
-      <p className="mt-0.5 mb-3 text-xs text-muted-foreground">{help}</p>
-      <form className="flex gap-2" onSubmit={add}>
+    <Card>
+      <CardHeader title={title} icon={icon} />
+      <p className="px-4 pb-3 text-xs text-muted-foreground">{help}</p>
+      <form className="flex gap-2 px-4" onSubmit={add}>
         <Input
           type="text"
           placeholder="exemple.com"
@@ -236,6 +301,7 @@ function DomainList({
         />
         <Button disabled={busy || !domain.trim()}>Ajouter</Button>
       </form>
+      <div className="px-2 pb-2">
       <Table className="mt-2">
         <TableBody>
           {entries.map((e) => (
@@ -257,6 +323,7 @@ function DomainList({
           )}
         </TableBody>
       </Table>
-    </section>
+      </div>
+    </Card>
   );
 }

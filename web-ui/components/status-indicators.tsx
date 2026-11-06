@@ -67,7 +67,7 @@ export default function StatusIndicators() {
   const showUpdate = !!u && u.newer && u.status.state !== "running";
 
   return (
-    <div className="flex flex-col gap-1.5 text-xs md:px-2">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs md:flex-col md:items-stretch md:px-2">
       <div role="status" title={detail} className="flex items-center gap-2 text-muted-foreground">
         <Dot tone={tone} />
         <span>

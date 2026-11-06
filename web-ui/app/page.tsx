@@ -1,5 +1,6 @@
 "use client";
 
+import { Activity, Ban, BarChart3, Globe, ListFilter, MonitorSmartphone, Server, Zap } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import ActivityChart from "@/components/activity-chart";
@@ -7,6 +8,7 @@ import BlockingControl from "@/components/blocking-control";
 import TopTable from "@/components/top-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardHeader } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, Blocking, nf, Stats } from "@/lib/api";
 
@@ -61,9 +63,9 @@ export default function Dashboard() {
   const cachePct = s.total ? (s.cached * 100) / s.total : 0;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold tracking-tight">Tableau de bord</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Tableau de bord</h1>
         <Tabs value={hours} onValueChange={setHours}>
           <TabsList aria-label="Période">
             <TabsTrigger value="1">1 h</TabsTrigger>
@@ -79,42 +81,49 @@ export default function Dashboard() {
         </p>
       )}
 
-      <BlockingControl blocking={stats.blocking} onChange={(b: Blocking) => setStats({ ...stats, blocking: b })} />
-      <UpstreamStrip upstreams={stats.upstreams} />
+      <BlockingControl
+        blocking={stats.blocking}
+        onChange={(b: Blocking) => setStats({ ...stats, blocking: b })}
+        blocked={s.blocked}
+        blockedPct={s.blockedPct}
+        hours={stats.hours}
+        logEnabled={stats.logEnabled}
+      />
 
       {!stats.logEnabled ? (
-        <p className="text-muted-foreground">
+        <Card className="p-4 text-muted-foreground">
           Le journal des requêtes est désactivé (<code>querylog.enabled: false</code>) : pas de statistiques.
-        </p>
+        </Card>
       ) : (
         <>
-          <dl className="grid grid-cols-2 divide-x divide-y border md:grid-cols-4 md:divide-y-0">
-            <Figure label="Requêtes" value={nf.format(s.total)} sub={`${nf.format(s.forwarded)} transmises, ${nf.format(s.local)} locales`} />
+          <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Figure icon={Activity} label="Requêtes" value={nf.format(s.total)} sub={`${nf.format(s.forwarded)} transmises, ${nf.format(s.local)} locales`} />
+            <Figure icon={Ban} label="Bloquées" value={nf.format(s.blocked)} sub={`${pct(s.blockedPct)} du total`} tone="text-blocked" />
             <Figure
-              label="Bloquées"
-              value={nf.format(s.blocked)}
-              sub={`${pct(s.blockedPct)} du total`}
-              valueClass="text-blocked"
-            />
-            <Figure
-              label="Cache"
+              icon={Zap}
+              label="Servies par le cache"
               value={nf.format(s.cached)}
               sub={`${pct(cachePct)} du total, ${nf.format(stats.cache?.entries ?? 0)} entrées${stats.cache?.stale ? `, ${nf.format(stats.cache.stale)} périmées servies` : ""}`}
             />
             <Figure
+              icon={ListFilter}
               label="Domaines dans les listes"
               value={nf.format(stats.filter.blocked)}
-              sub={s.errors > 0 ? `${nf.format(s.errors)} échec(s) upstream` : "aucun échec upstream"}
+              sub={stats.filter.blocked === 0 ? "aucune liste : ajoute-en dans Filtres" : s.errors > 0 ? `${nf.format(s.errors)} échec(s) upstream` : "aucun échec upstream"}
+              tone={stats.filter.blocked === 0 ? "text-warn" : ""}
             />
           </dl>
 
-          <section>
-            <h2 className="mb-3 text-sm font-semibold">Requêtes par tranche de temps</h2>
-            <ActivityChart data={stats.timeline} hours={stats.hours} />
-          </section>
+          <Card>
+            <CardHeader title="Requêtes par tranche de temps" icon={BarChart3} />
+            <div className="px-3 pb-4">
+              <ActivityChart data={stats.timeline} hours={stats.hours} />
+            </div>
+          </Card>
 
-          <div className="grid gap-8 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             <TopTable
+              icon={Ban}
               title="Domaines les plus bloqués"
               rows={stats.topBlocked}
               empty="Aucun domaine bloqué sur cette période."
@@ -128,9 +137,12 @@ export default function Dashboard() {
                 )
               }
             />
-            <TopTable title="Clients les plus actifs" rows={stats.topClients} />
+            <TopTable icon={MonitorSmartphone} title="Clients les plus actifs" rows={stats.topClients} />
           </div>
-          <TopTable title="Domaines les plus demandés" rows={stats.topDomains} />
+          <div className="grid gap-4 lg:grid-cols-2">
+            <TopTable icon={Globe} title="Domaines les plus demandés" rows={stats.topDomains} />
+            <UpstreamCard upstreams={stats.upstreams} />
+          </div>
         </>
       )}
     </div>
@@ -138,32 +150,45 @@ export default function Dashboard() {
 }
 
 // État des résolveurs amont : un upstream en panne est mis de côté un moment, on l'affiche.
-function UpstreamStrip({ upstreams }: { upstreams: Stats["upstreams"] }) {
-  if (upstreams.length === 0) return null;
+function UpstreamCard({ upstreams }: { upstreams: Stats["upstreams"] }) {
   const time = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "");
   return (
-    <section aria-label="Résolveurs amont" className="-mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-      <span className="text-muted-foreground">Upstreams</span>
-      {upstreams.map((u) => (
-        <span key={u.name} className="flex items-center gap-1.5">
-          <span className="font-mono">{u.name}</span>
-          {u.healthy ? (
-            <Badge variant="ok">ok</Badge>
-          ) : (
-            <Badge variant="warn">en panne, nouvel essai à {time(u.downUntil)}</Badge>
-          )}
-        </span>
-      ))}
-    </section>
+    <Card>
+      <CardHeader title="Résolveurs amont" icon={Server} />
+      <ul className="flex flex-col gap-2 px-4 pb-4">
+        {upstreams.length === 0 && <li className="text-muted-foreground">Aucun résolveur configuré.</li>}
+        {upstreams.map((u) => (
+          <li key={u.name} className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-mono text-xs break-all">{u.name}</span>
+            {u.healthy ? <Badge variant="ok">en marche</Badge> : <Badge variant="warn">en panne, nouvel essai à {time(u.downUntil)}</Badge>}
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 
-function Figure({ label, value, sub, valueClass = "" }: { label: string; value: string; sub: string; valueClass?: string }) {
+function Figure({
+  icon: Icon,
+  label,
+  value,
+  sub,
+  tone = "",
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  sub: string;
+  tone?: string;
+}) {
   return (
-    <div className="px-4 py-3">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={`mt-0.5 text-2xl font-semibold tabular-nums ${valueClass}`}>{value}</dd>
+    <Card className="px-4 py-3.5">
+      <dt className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Icon className="size-3.5" aria-hidden />
+        {label}
+      </dt>
+      <dd className={`mt-1 text-2xl font-semibold tabular-nums ${tone}`}>{value}</dd>
       <dd className="mt-0.5 text-xs text-muted-foreground">{sub}</dd>
-    </div>
+    </Card>
   );
 }
