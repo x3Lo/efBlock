@@ -25,8 +25,7 @@ export default function ThemeToggle() {
   return (
     <Button variant="ghost" size="sm" onClick={toggle} className="justify-start gap-2 text-muted-foreground" title="Changer de thème">
       {light ? <Moon className="size-4" aria-hidden /> : <Sun className="size-4" aria-hidden />}
-      <span className="hidden md:inline">{light ? "Thème sombre" : "Thème clair"}</span>
-      <span className="sr-only md:hidden">{light ? "Thème sombre" : "Thème clair"}</span>
+      {light ? "Thème sombre" : "Thème clair"}
     </Button>
   );
 }
