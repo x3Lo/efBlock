@@ -40,6 +40,16 @@ truncate -s 8G "$DISK"
 echo "==> installation (sans internet, $INSTALL_TIMEOUT s au plus)"
 # Question restée à l'écran (titre « [!!] ... » de l'installateur), pour un message d'échec lisible.
 last_question() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$OUT/installation.log" | grep -ao '\[!!\] [^(]*' | tail -1 | sed 's/ *$//'; }
+# Texte du dernier écran (sans les codes de couleur ni les cadres), affiché dans le journal de la CI.
+last_screen() {
+	echo "----- dernier écran de l'installateur -----"
+	sed 's/\x1b\[[0-9;?]*[A-Za-z]/\n/g; s/\x1b[()][0-9A-Za-z]//g' "$OUT/installation.log" | tr -d '\r' |
+		tr -s ' ' | grep -av '^ *$' | grep -avE '^[lqkxmjtuw ]+$' | tail -60
+	echo "-------------------------------------------"
+}
+# Taille « utile » du journal : sans les codes d'écran ni l'horloge de la barre d'état, qui change
+# chaque minute même quand l'installateur attend une réponse.
+useful_size() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/[0-9][0-9]:[0-9][0-9]//g' "$OUT/installation.log" 2>/dev/null | tr -d ' \n\r' | wc -c; }
 
 qemu-system-x86_64 "${ACCEL[@]}" -m 2048 -smp 2 -no-reboot -nographic \
 	-drive file="$DISK",format=raw,if=virtio \
@@ -53,13 +63,13 @@ QPID=$!
 STALL="${STALL:-480}"
 start=$SECONDS last_size=-1 last_change=$SECONDS
 while kill -0 $QPID 2>/dev/null; do
-	size=$(stat -c %s "$OUT/installation.log" 2>/dev/null || echo 0)
+	size=$(useful_size)
 	if [[ $size -ne $last_size ]]; then last_size=$size last_change=$SECONDS; fi
 	if (( SECONDS - last_change > STALL )); then
-		kill $QPID; fail "installation bloquée sur une question : « $(last_question) »"
+		kill $QPID; last_screen; fail "installation bloquée sur une question : « $(last_question) »"
 	fi
 	if (( SECONDS - start > INSTALL_TIMEOUT )); then
-		kill $QPID; fail "installation trop longue ($INSTALL_TIMEOUT s), dernier écran : « $(last_question) »"
+		kill $QPID; last_screen; fail "installation trop longue ($INSTALL_TIMEOUT s), dernier écran : « $(last_question) »"
 	fi
 	sleep 10
 done
