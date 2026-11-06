@@ -432,7 +432,7 @@ function InfraSection({ view }: { view: SettingsView }) {
           {state === "restarting" ? (
             <span className="text-muted-foreground">Redémarrage en cours, la page se rechargera toute seule…</span>
           ) : (
-            <ConfirmButton label="Redémarrer efBlock" onConfirm={restart} />
+            <ConfirmButton variant="outline" label="Redémarrer efBlock" onConfirm={restart} />
           )}
           {state === "error" && <span className="text-sm text-destructive">{error || "Le service n'a pas répondu après 60 secondes."}</span>}
         </div>
