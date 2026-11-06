@@ -1,4 +1,7 @@
 [Unit]
+# Ne jamais renoncer à relancer le service : sans ça, systemd s'arrête après 5 échecs en 10 s
+# (réseau pas encore prêt au démarrage...) et le service reste éteint.
+StartLimitIntervalSec=0
 Description=Console d'administration efBlock (écran de la machine)
 After=systemd-user-sessions.service efblock.service
 # Prend la place de la console de connexion habituelle sur le premier écran.
