@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/miekg/dns v1.1.73
 	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto/x509roots/fallback v0.0.0-20261105095718-a1058eb15227
 	golang.org/x/sync v0.24.0
 	golang.org/x/term v0.47.0
 	gopkg.in/yaml.v3 v3.0.1

@@ -61,6 +61,38 @@ if ! has /isolinux/txt.cfg; then
 	MAP_ISOLINUX=0
 fi
 
+# 2b. Le kit : les paquets Debian utiles (outils, serveur SSH...) avec leurs dépendances, pour que
+# l'installation et le déploiement fonctionnent sans internet. On les télécharge ici, une fois, dans
+# un conteneur Debian propre ; l'installateur les prend ensuite sur l'ISO. KIT_DIR permet d'en fournir un.
+KIT="${KIT_DIR:-}"
+if [[ -z $KIT ]]; then
+	if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+		KIT="dist/kit"
+		rm -rf "$KIT"; mkdir -p "$KIT"
+		echo "==> téléchargement du kit de paquets Debian"
+		docker run --rm -v "$PWD/$KIT:/out" debian:stable bash -s <<'KITSCRIPT'
+set -e
+apt-get update -qq
+dl() { # dl <dossier> <paquets...> : télécharge les paquets et leurs dépendances, sans les installer
+	d=$1; shift
+	mkdir -p "/out/$d/partial"
+	apt-get install -y --no-install-recommends --download-only -o "Dir::Cache::archives=/out/$d" "$@" >/dev/null
+	rm -rf "/out/$d/partial" "/out/$d/lock"
+}
+dl base ca-certificates systemd-timesyncd bind9-dnsutils iproute2 iputils-ping less nano curl
+dl ssh openssh-server
+KITSCRIPT
+	else
+		echo "avertissement : docker indisponible : l'ISO sera construite SANS le kit de paquets (outils et serveur SSH absents hors ligne)" >&2
+		KIT=""
+	fi
+fi
+if [[ -n $KIT ]]; then
+	for d in base ssh; do
+		ls "$KIT/$d"/*.deb >/dev/null 2>&1 || { echo "kit incomplet : $KIT/$d sans paquet" >&2; exit 1; }
+	done
+fi
+
 # 3. Ce qu'on ajoute au support.
 STAGE="dist/iso-stage"
 rm -rf "$STAGE"
@@ -68,6 +100,7 @@ mkdir -p "$STAGE/efblock"
 cat image/files/preseed-common.cfg image/files/preseed-partman-auto.cfg >"$STAGE/efblock/preseed-auto.cfg"
 cp image/files/late.sh "$STAGE/efblock/late.sh"
 cp "$DEB" "$STAGE/efblock/efblock_${VERSION}_amd64.deb"
+[[ -n $KIT ]] && cp -r "$KIT" "$STAGE/efblock/kit"
 
 # 4. On refait l'ISO. « -boot_image any replay » reproduit à l'identique le démarrage BIOS, UEFI
 # et la clé USB de l'ISO d'origine : on ne touche qu'aux fichiers ci-dessous.

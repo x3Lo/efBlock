@@ -68,8 +68,9 @@ Une image qui installe un Debian minimal avec efBlock déjà en place, sur le mo
    souhaites, **serveur SSH** (administration depuis un autre poste ; il autorise `root` par mot de passe, à retirer en production
    en supprimant `/etc/ssh/sshd_config.d/00-efblock.conf`).
 
-L'installation **télécharge les paquets Debian** : la machine doit avoir internet pendant l'installation (DHCP). Il n'y a aucun
-mot de passe par défaut : tu le choisis au premier démarrage.
+L'installation **n'a pas besoin d'internet** : l'ISO contient tout (système, outils comme `dig`, `curl` et `nano`, et même le
+serveur SSH). Internet ne sert qu'aux mises à jour d'efBlock (option 6 de la console). Il n'y a aucun mot de passe par défaut :
+tu le choisis au premier démarrage.
 
 ### Option 2 : le paquet Debian
 

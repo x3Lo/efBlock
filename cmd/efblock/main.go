@@ -29,6 +29,8 @@ import (
 	"github.com/x3Lo/efBlock/internal/store"
 	"github.com/x3Lo/efBlock/internal/upstream"
 	"github.com/x3Lo/efBlock/internal/web"
+	// Certificats racine intégrés : utilisés seulement si le système n'en a pas (ISO sans internet).
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 // version est renseignée à la compilation (-ldflags "-X main.version=1.2.3").

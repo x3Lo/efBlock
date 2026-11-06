@@ -63,6 +63,9 @@ jobs:
             printf '%s' "$files" | grep -q "/efblock/$f" || { echo "::error::$f absent de l'ISO"; ok=0; }
           done
           printf '%s' "$files" | grep -Eq '/efblock/efblock_.*_amd64\.deb' || { echo "::error::paquet efBlock absent de l'ISO"; ok=0; }
+          for d in base ssh; do
+            printf '%s' "$files" | grep -Eq "/efblock/kit/$d/.*\.deb" || { echo "::error::kit $d absent de l'ISO"; ok=0; }
+          done
           [ "$ok" = 1 ]
       - name: Empreintes
         run: cd dist && sha256sum efblock_*.deb efblock-*.iso > SHA256SUMS && cat SHA256SUMS
