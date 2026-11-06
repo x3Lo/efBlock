@@ -165,6 +165,27 @@ func (e *Engine) Enabled() bool {
 // ValidateDomain normalise et valide un domaine saisi par l'utilisateur.
 func ValidateDomain(s string) (string, bool) { return normalizeDomain(s) }
 
+// DomainFromInput accepte ce qu'on colle naturellement dans un champ « domaine » et en garde le nom :
+// une adresse complète (https://www.exemple.com/page?x=1), un nom suivi d'un chemin
+// (exemple.com/pub), d'un port (exemple.com:443), ou précédé de « *. ». Retourne le domaine validé.
+func DomainFromInput(in string) (string, bool) {
+	s := strings.TrimSpace(in)
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.LastIndex(s, "@"); i >= 0 { // identifiants dans l'adresse (utilisateur@hôte)
+		s = s[i+1:]
+	}
+	if i := strings.LastIndex(s, ":"); i >= 0 && strings.Count(s, ":") == 1 { // port, jamais une IPv6
+		s = s[:i]
+	}
+	s = strings.TrimPrefix(s, "*.")
+	return normalizeDomain(s)
+}
+
 // SetUserRules remplace l'allowlist et la blocklist perso.
 // Les entrées invalides sont ignorées ; le nombre d'entrées rejetées est retourné.
 func (e *Engine) SetUserRules(allow, block []string) (rejected int) {

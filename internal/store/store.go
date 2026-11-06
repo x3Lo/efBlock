@@ -217,9 +217,9 @@ func (s *Store) Domains(k Kind) []DomainEntry {
 
 // AddDomain ajoute un domaine (sous-domaines inclus). Ajouter deux fois est sans effet.
 func (s *Store) AddDomain(k Kind, domain string) error {
-	d, ok := filter.ValidateDomain(strings.TrimSpace(domain))
+	d, ok := filter.DomainFromInput(domain)
 	if !ok {
-		return fmt.Errorf("%w: %q n'est pas un nom de domaine", ErrInvalid, domain)
+		return fmt.Errorf("%w: %q n'est pas un nom de domaine (exemple attendu : publicite.exemple.com)", ErrInvalid, domain)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -473,7 +473,7 @@ func normalizeDomains(group string, in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	seen := map[string]bool{}
 	for _, d := range in {
-		n, ok := filter.ValidateDomain(strings.TrimSpace(d))
+		n, ok := filter.DomainFromInput(d)
 		if !ok {
 			return nil, fmt.Errorf("%w: groupe « %s » : %q n'est pas un nom de domaine", ErrInvalid, group, d)
 		}
