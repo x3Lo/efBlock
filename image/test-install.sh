@@ -26,7 +26,11 @@ xorriso -osirrox on -indev "$ISO" -extract /isolinux/txt.cfg "$OUT/txt.cfg" >/de
 ENTRY="$(grep -m1 'append' "$OUT/txt.cfg" || true)"
 grep -q 'preseed/file=/cdrom/efblock/preseed-auto.cfg' <<<"$ENTRY" || fail "l'entrée du menu ne charge pas preseed-auto.cfg : $ENTRY"
 CMDLINE="auto=true priority=critical preseed/file=/cdrom/efblock/preseed-auto.cfg"
+# Langue, pays et clavier : demandés à l'écran lors d'une vraie installation ; ici, on y répond
+# d'avance, sous toutes les formes que l'installateur reconnaît (alias courts et questions elles-mêmes).
+CMDLINE+=" locale=fr_FR.UTF-8 language=fr country=FR keymap=fr"
 CMDLINE+=" debian-installer/locale=fr_FR.UTF-8 debian-installer/language=fr debian-installer/country=FR"
+CMDLINE+=" localechooser/languagelist=fr localechooser/shortlist=FR countrychooser/shortlist=FR"
 CMDLINE+=" keyboard-configuration/xkb-keymap=fr console-setup/ask_detect=false"
 CMDLINE+=" console=ttyS0,115200n8 --- console=ttyS0,115200n8"
 
@@ -34,17 +38,32 @@ CMDLINE+=" console=ttyS0,115200n8 --- console=ttyS0,115200n8"
 DISK="$OUT/disk.img"
 truncate -s 8G "$DISK"
 echo "==> installation (sans internet, $INSTALL_TIMEOUT s au plus)"
-set +e
-timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 "${ACCEL[@]}" -m 2048 -smp 2 -no-reboot -nographic \
+# Question restée à l'écran (titre « [!!] ... » de l'installateur), pour un message d'échec lisible.
+last_question() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$OUT/installation.log" | grep -ao '\[!!\] [^(]*' | tail -1 | sed 's/ *$//'; }
+
+qemu-system-x86_64 "${ACCEL[@]}" -m 2048 -smp 2 -no-reboot -nographic \
 	-drive file="$DISK",format=raw,if=virtio \
 	-cdrom "$ISO" \
 	-nic user,model=virtio-net-pci,restrict=on \
 	-kernel "$OUT/vmlinuz" -initrd "$OUT/initrd.gz" -append "$CMDLINE" \
-	>"$OUT/installation.log" 2>&1 </dev/null
-code=$?
-set -e
-[[ $code -eq 124 ]] && { tail -40 "$OUT/installation.log" >&2; fail "installation trop longue (bloquée sur une question ?)"; }
-[[ $code -ne 0 ]] && { tail -40 "$OUT/installation.log" >&2; fail "qemu s'est arrêté avec le code $code"; }
+	>"$OUT/installation.log" 2>&1 </dev/null &
+QPID=$!
+# Surveillance : l'installateur redessine l'écran tant qu'il travaille. Si rien ne bouge pendant
+# STALL secondes, il attend une réponse : on arrête tout de suite au lieu d'attendre la limite.
+STALL="${STALL:-480}"
+start=$SECONDS last_size=-1 last_change=$SECONDS
+while kill -0 $QPID 2>/dev/null; do
+	size=$(stat -c %s "$OUT/installation.log" 2>/dev/null || echo 0)
+	if [[ $size -ne $last_size ]]; then last_size=$size last_change=$SECONDS; fi
+	if (( SECONDS - last_change > STALL )); then
+		kill $QPID; fail "installation bloquée sur une question : « $(last_question) »"
+	fi
+	if (( SECONDS - start > INSTALL_TIMEOUT )); then
+		kill $QPID; fail "installation trop longue ($INSTALL_TIMEOUT s), dernier écran : « $(last_question) »"
+	fi
+	sleep 10
+done
+wait $QPID || fail "qemu s'est arrêté avec une erreur (code $?)"
 echo "    installation terminée"
 
 # 3. Examen du disque installé.
