@@ -122,8 +122,8 @@ export default function UpdateSection() {
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
-          {info?.newer && info.can_apply && <ConfirmButton label={`Mettre à jour vers ${info.latest}`} onConfirm={apply} />}
-          <Button variant="ghost" size="sm" disabled={busy} onClick={() => load(true)}>
+          {info?.newer && info.can_apply && <ConfirmButton variant="default" label={`Mettre à jour vers ${info.latest}`} onConfirm={apply} />}
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => load(true)}>
             Vérifier maintenant
           </Button>
           {info && !info.newer && !info.error && info.latest && <span className="text-sm text-muted-foreground">efBlock est à jour.</span>}
