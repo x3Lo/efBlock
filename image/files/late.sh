@@ -45,6 +45,16 @@ ExecStart=/bin/sh -c 'rm -f /etc/resolv.conf; printf "nameserver 127.0.0.1\nname
 WantedBy=multi-user.target
 UNIT
 
+# --- Allègement : retire ce qui ne sert pas sur un serveur DNS ---
+# (outils de l'installateur, détection d'autres systèmes, pages de manuel, documentation)
+for p in installation-report tasksel tasksel-data os-prober laptop-detect reportbug popularity-contest man-db manpages; do
+    if in-target dpkg -s "$p" >/dev/null 2>&1; then
+        in-target apt-get -y purge "$p" || echo "AVERTISSEMENT : $p non retiré"
+    fi
+done
+in-target apt-get clean || true
+rm -rf /target/usr/share/doc/*/changelog* /target/usr/share/man/* /target/usr/share/info/* 2>/dev/null || true
+
 # --- Console d'administration sur l'écran de la machine ---
 in-target systemctl enable efblock efblock-resolv efblock-console
 
