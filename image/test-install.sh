@@ -109,6 +109,8 @@ for unit in efblock efblock-console efblock-update.path systemd-networkd; do
 	sudo find "$M/etc/systemd/system" -name "$unit*" | grep -q . || fail "service $unit non activé"
 	echo "    service $unit : activé"
 done
+sudo grep -q '^root:!' "$M/etc/shadow" || fail "le compte root n'est pas verrouillé (mot de passe d'installation utilisable)"
+echo "    compte root : verrouillé (mot de passe à choisir au premier usage)"
 [[ -f "$M/usr/share/efblock/kit/ssh/"openssh-server_*.deb ]] || ls "$M"/usr/share/efblock/kit/ssh/openssh-server_*.deb >/dev/null 2>&1 || fail "kit SSH absent du disque"
 sudo umount "$M"; sudo losetup -d "$LOOP"; trap - EXIT
 
