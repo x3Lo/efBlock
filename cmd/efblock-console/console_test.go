@@ -348,3 +348,32 @@ func TestConfirmOuiNon(t *testing.T) {
 		}
 	}
 }
+
+func TestFirstBoot(t *testing.T) {
+	dir := t.TempDir()
+	firstBootFile = filepath.Join(dir, "marqueur")
+	newUI := func(in string) *UI {
+		out, err := os.CreateTemp(dir, "out")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &UI{in: bufio.NewReader(strings.NewReader(in)), out: out}
+	}
+
+	// Entrée fermée avant la fin : on ne marque pas la configuration comme faite.
+	firstBoot(newUI(""))
+	if _, err := os.Stat(firstBootFile); err == nil {
+		t.Fatal("marqueur écrit alors que rien n'a été répondu")
+	}
+
+	// non à tout : le marqueur est écrit, et on ne repose plus les questions.
+	firstBoot(newUI("non\nnon\n\n"))
+	if _, err := os.Stat(firstBootFile); err != nil {
+		t.Fatalf("marqueur absent : %v", err)
+	}
+	ui := newUI("")
+	firstBoot(ui)
+	if fi, _ := ui.out.Stat(); fi.Size() != 0 {
+		t.Error("les questions ont été reposées")
+	}
+}
