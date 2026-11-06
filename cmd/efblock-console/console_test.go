@@ -7,7 +7,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -413,5 +415,58 @@ func TestFirstBootAffichageImmediat(t *testing.T) {
 	}
 	if _, err := os.Stat(firstBootFile); err == nil {
 		t.Error("marqueur écrit alors que l'entrée s'est fermée")
+	}
+}
+
+func TestApplyUpdate(t *testing.T) {
+	dir := t.TempDir()
+	updateRequestFile = filepath.Join(dir, "demande")
+	updateStatusFile = filepath.Join(dir, "etat")
+	updateLogFile = filepath.Join(dir, "journal")
+	defer func(f func(*UI, bool) error) { runUpdateFn = f }(runUpdateFn)
+	read := func() map[string]string {
+		var m map[string]string
+		b, err := os.ReadFile(updateStatusFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+
+	// Succès : la demande est effacée AVANT la mise à jour, l'état passe par « running » puis « ok ».
+	os.WriteFile(updateRequestFile, []byte("x"), 0o644)
+	runUpdateFn = func(ui *UI, yes bool) error {
+		if _, err := os.Stat(updateRequestFile); err == nil {
+			t.Error("la demande doit être effacée avant la mise à jour (sinon boucle systemd)")
+		}
+		if !yes {
+			t.Error("la mise à jour demandée depuis l'interface ne doit pas poser de question")
+		}
+		if m := read(); m["state"] != "running" {
+			t.Errorf("état pendant la mise à jour : %v", m)
+		}
+		ui.printf("ligne de journal\n")
+		return nil
+	}
+	if code := applyUpdate(); code != 0 {
+		t.Errorf("code de sortie %d", code)
+	}
+	if m := read(); m["state"] != "ok" {
+		t.Errorf("état final : %v", m)
+	}
+	if b, _ := os.ReadFile(updateLogFile); !strings.Contains(string(b), "ligne de journal") {
+		t.Errorf("journal : %q", b)
+	}
+
+	// Échec : l'état « failed » porte le message.
+	runUpdateFn = func(ui *UI, yes bool) error { return errors.New("empreinte incorrecte") }
+	if code := applyUpdate(); code == 0 {
+		t.Error("un échec doit donner un code de sortie non nul")
+	}
+	if m := read(); m["state"] != "failed" || !strings.Contains(m["message"], "empreinte") {
+		t.Errorf("état après échec : %v", m)
 	}
 }

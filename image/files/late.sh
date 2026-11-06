@@ -81,7 +81,7 @@ in-target apt-get clean || true
 rm -rf /target/usr/share/doc/*/changelog* /target/usr/share/man/* /target/usr/share/info/* 2>/dev/null || true
 
 # --- Console d'administration sur l'écran de la machine ---
-in-target systemctl enable efblock efblock-resolv efblock-console
+in-target systemctl enable efblock efblock-resolv efblock-console efblock-update.path
 
 # --- Pas de message de démarrage bavard : l'écran appartient au menu ---
 sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=3"/' /target/etc/default/grub

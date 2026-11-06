@@ -3,6 +3,8 @@ set -e
 case "$1" in
 remove | deconfigure)
 	if [ -d /run/systemd/system ]; then
+		systemctl stop efblock-update.path >/dev/null 2>&1 || true
+		systemctl disable efblock-update.path >/dev/null 2>&1 || true
 		systemctl stop efblock || true
 		systemctl disable efblock >/dev/null 2>&1 || true
 	fi

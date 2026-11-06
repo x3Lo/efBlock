@@ -24,6 +24,10 @@ configure)
 	if [ -d /run/systemd/system ]; then
 		systemctl daemon-reload || true
 		systemctl enable efblock >/dev/null 2>&1 || true
+		# Mise à jour depuis l'interface web : surveille le fichier de demande (ne jamais « restart » ici :
+		# ce script peut être lancé PAR la mise à jour elle-même).
+		systemctl enable efblock-update.path >/dev/null 2>&1 || true
+		systemctl start efblock-update.path >/dev/null 2>&1 || true
 		if [ -n "$2" ]; then
 			systemctl try-restart efblock || true # mise à jour : on relance le service
 		else

@@ -1,0 +1,13 @@
+[Unit]
+Description=Mise à jour d'efBlock demandée depuis l'interface web
+After=network-online.target
+Wants=network-online.target
+# Plusieurs demandes rapprochées (double clic...) ne doivent pas bloquer l'unité.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# Tourne en root : télécharge la dernière version publiée, vérifie son empreinte SHA-256, l'installe
+# et redémarre efBlock. La demande ne contient rien : la version vient de GitHub, pas du fichier.
+ExecStart=/usr/bin/efblock-console -apply-update
+TimeoutStartSec=20min

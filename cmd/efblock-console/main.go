@@ -45,6 +45,7 @@ func main() {
 	statusOnly := flag.Bool("status", false, "affiche l'état et quitte")
 	doUpdate := flag.Bool("update", false, "vérifie et installe la dernière version, sans menu")
 	assumeYes := flag.Bool("yes", false, "avec -update : ne demande pas de confirmation")
+	applyUpd := flag.Bool("apply-update", false, "exécute la mise à jour demandée depuis l'interface web (lancé par systemd)")
 	flag.Parse()
 
 	switch {
@@ -58,6 +59,9 @@ func main() {
 	if os.Geteuid() != 0 {
 		fmt.Fprintln(os.Stderr, "efblock-console doit être lancé en administrateur (root).")
 		os.Exit(1)
+	}
+	if *applyUpd {
+		os.Exit(applyUpdate())
 	}
 	ui := &UI{in: bufio.NewReader(os.Stdin), out: os.Stdout}
 	if *doUpdate {

@@ -1,0 +1,10 @@
+[Unit]
+Description=Demande de mise à jour d'efBlock (déposée par l'interface web)
+
+[Path]
+# L'interface web, qui tourne sans droits, dépose ce fichier ; le service lié l'efface puis installe.
+PathExists=/var/lib/efblock/update-request
+Unit=efblock-update.service
+
+[Install]
+WantedBy=multi-user.target
