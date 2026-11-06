@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +21,10 @@ var (
 	updateLogFile     = "/var/lib/efblock/update.log"
 
 	runUpdateFn = runUpdate // remplaçable dans les tests
+
+	// L'écran de la machine (efblock-console.service) tourne avec l'ancien programme : on le relance
+	// pour qu'il affiche la nouvelle version. Sûr ici : cette mise à jour ne tourne PAS dans cet écran.
+	restartConsoleFn = func() { _ = exec.Command("systemctl", "restart", "efblock-console").Run() }
 )
 
 // writeUpdateStatus écrit l'état de façon atomique : l'interface ne lit jamais un fichier à moitié écrit.
@@ -56,5 +61,6 @@ func applyUpdate() int {
 		return 1
 	}
 	writeUpdateStatus("ok", "Mise à jour terminée.")
+	restartConsoleFn()
 	return 0
 }
