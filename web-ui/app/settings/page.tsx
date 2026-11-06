@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import ConfirmButton from "@/components/confirm-button";
 import Field from "@/components/field";
 import ListField from "@/components/list-field";
+import UpdateSection from "@/components/update-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,7 @@ export default function Settings() {
           valeur de <code>config.yaml</code> pour le groupe modifié ; « Rétablir » revient à <code>config.yaml</code>.
         </p>
       </div>
+      <UpdateSection />
       <UpstreamSection view={view} setView={setView} />
       <LocalSection view={view} setView={setView} />
       <FilterSection view={view} setView={setView} />

@@ -169,6 +169,7 @@ func main() {
 				return srv.Local().ClientName(ip)
 			},
 			Restart: restart,
+			Update:  updateConfig(),
 		})
 		httpSrv = &http.Server{
 			Addr:              cfg.Web.Listen,
@@ -354,4 +355,14 @@ func setWebPassword(cfgPath string) int {
 	}
 	fmt.Fprintln(os.Stderr, "Mot de passe de l'interface web enregistré. Redémarre le service pour l'activer : systemctl restart efblock")
 	return 0
+}
+
+// updateConfig : la mise à jour depuis l'interface n'existe que sur une installation par paquet
+// Debian (ou ISO), qui fournit l'unité systemd chargée de l'installer en root.
+func updateConfig() web.UpdateConfig {
+	c := web.UpdateConfig{Version: version, StatusFile: "/var/lib/efblock/update-status", API: os.Getenv("EFBLOCK_UPDATE_API")}
+	if _, err := os.Stat("/lib/systemd/system/efblock-update.path"); err == nil {
+		c.RequestFile = "/var/lib/efblock/update-request"
+	}
+	return c
 }

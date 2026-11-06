@@ -31,6 +31,7 @@ build efblock-console
 # Le service du paquet pointe sur /usr/bin (et non /usr/local/bin comme deploy/install.sh).
 sed 's#/usr/local/bin/efblock#/usr/bin/efblock#' deploy/efblock.service >"$ROOT/lib/systemd/system/efblock.service"
 install -m 0644 packaging/efblock-console.service "$ROOT/lib/systemd/system/efblock-console.service"
+install -m 0644 packaging/efblock-update.service packaging/efblock-update.path "$ROOT/lib/systemd/system/"
 install -m 0640 packaging/config.default.yaml "$ROOT/etc/efblock/config.yaml"
 install -m 0644 README.md "$ROOT/usr/share/doc/efblock/README.md"
 cat >"$ROOT/usr/share/doc/efblock/copyright" <<COPY

@@ -138,6 +138,18 @@ export type GroupsResponse = {
 
 export type UpstreamTestResult = { name: string; ok: boolean; latencyMs: number; error?: string };
 
+export type UpdateStatus = { state: "idle" | "running" | "ok" | "failed"; message: string; time?: string };
+export type UpdateInfo = {
+  current: string;
+  latest: string;
+  newer: boolean;
+  checked: string;
+  error: string;
+  can_apply: boolean;
+  reason?: string;
+  status: UpdateStatus;
+};
+
 export const nf = new Intl.NumberFormat("fr-FR");
 export const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
