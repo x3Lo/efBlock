@@ -76,6 +76,23 @@
   body {
     @apply bg-background text-foreground font-sans text-sm antialiased;
   }
+  /* Curseur « main » sur tout ce qui se clique (Tailwind v4 ne le met plus sur les boutons). */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"],
+  select:not(:disabled),
+  summary,
+  label:has(> input[type="checkbox"]),
+  label:has(> input[type="radio"]),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    cursor: pointer;
+  }
+  button:disabled,
+  select:disabled,
+  input:disabled {
+    cursor: not-allowed;
+  }
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-ring;
   }

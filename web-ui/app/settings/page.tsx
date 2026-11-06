@@ -1,6 +1,5 @@
 "use client";
 
-import { ListFilter, Lock, Server, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import ConfirmButton from "@/components/confirm-button";
@@ -11,13 +10,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { sectionFromHash, settingsSections, useHash } from "@/lib/settings-sections";
 import { api, GroupName, Groups, SettingsView, UpstreamTestResult } from "@/lib/api";
 
 type Msg = { error: boolean; text: string } | null;
 
 export default function Settings() {
   const [view, setView] = useState<SettingsView | null>(null);
+  // Section choisie dans le sous-menu « Réglages » de la barre latérale (après le # de l'adresse).
+  const section = sectionFromHash(useHash());
+  const current = settingsSections.find((s) => s.id === section) ?? settingsSections[0];
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -37,39 +39,35 @@ export default function Settings() {
           <code>config.yaml</code> pour le groupe modifié ; « Rétablir » revient à <code>config.yaml</code>.
         </p>
       </div>
-      <Tabs defaultValue="general" className="gap-4">
-        <TabsList aria-label="Catégories de réglages" className="h-9 self-start overflow-x-auto">
-          <TabsTrigger value="general" className="gap-1.5 text-sm">
-            <SlidersHorizontal className="size-3.5" aria-hidden /> Général
-          </TabsTrigger>
-          <TabsTrigger value="dns" className="gap-1.5 text-sm">
-            <Server className="size-3.5" aria-hidden /> DNS
-          </TabsTrigger>
-          <TabsTrigger value="filtrage" className="gap-1.5 text-sm">
-            <ListFilter className="size-3.5" aria-hidden /> Filtrage et cache
-          </TabsTrigger>
-          <TabsTrigger value="acces" className="gap-1.5 text-sm">
-            <Lock className="size-3.5" aria-hidden /> Accès
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="general" className="flex flex-col gap-4">
+      <h2 className="flex items-center gap-2 text-base font-semibold">
+        <current.icon className="size-4 text-muted-foreground" aria-hidden />
+        {current.label}
+      </h2>
+      {section === "general" && (
+        <div className="flex flex-col gap-4">
           <UpdateSection />
           <PasswordSection />
           <InfraSection view={view} />
-        </TabsContent>
-        <TabsContent value="dns" className="flex flex-col gap-4">
+        </div>
+      )}
+      {section === "dns" && (
+        <div className="flex flex-col gap-4">
           <UpstreamSection view={view} setView={setView} />
           <LocalSection view={view} setView={setView} />
-        </TabsContent>
-        <TabsContent value="filtrage" className="flex flex-col gap-4">
+        </div>
+      )}
+      {section === "filtrage" && (
+        <div className="flex flex-col gap-4">
           <FilterSection view={view} setView={setView} />
           <CacheSection view={view} setView={setView} />
           <LogSection view={view} setView={setView} />
-        </TabsContent>
-        <TabsContent value="acces" className="flex flex-col gap-4">
+        </div>
+      )}
+      {section === "acces" && (
+        <div className="flex flex-col gap-4">
           <AccessSection view={view} setView={setView} />
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
     </div>
   );
 }
