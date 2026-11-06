@@ -22,7 +22,8 @@ if [[ -w /dev/kvm ]]; then ACCEL=(-enable-kvm -cpu host); else echo "avertisseme
 # langue et de clavier (normalement posées à l'écran) et la console série pour suivre l'installation.
 xorriso -osirrox on -indev "$ISO" -extract /install.amd/vmlinuz "$OUT/vmlinuz" -extract /install.amd/initrd.gz "$OUT/initrd.gz" >/dev/null 2>&1 ||
 	fail "noyau ou initrd introuvable dans l'ISO"
-ENTRY="$(xorriso -osirrox on -indev "$ISO" -extract /isolinux/txt.cfg /dev/stdout 2>/dev/null | grep -m1 'append' || true)"
+xorriso -osirrox on -indev "$ISO" -extract /isolinux/txt.cfg "$OUT/txt.cfg" >/dev/null 2>&1 || fail "menu de démarrage introuvable dans l'ISO"
+ENTRY="$(grep -m1 'append' "$OUT/txt.cfg" || true)"
 grep -q 'preseed/file=/cdrom/efblock/preseed-auto.cfg' <<<"$ENTRY" || fail "l'entrée du menu ne charge pas preseed-auto.cfg : $ENTRY"
 CMDLINE="auto=true priority=critical preseed/file=/cdrom/efblock/preseed-auto.cfg"
 CMDLINE+=" debian-installer/locale=fr_FR.UTF-8 debian-installer/language=fr debian-installer/country=FR"
