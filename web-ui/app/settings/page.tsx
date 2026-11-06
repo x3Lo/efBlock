@@ -1,5 +1,6 @@
 "use client";
 
+import { ListFilter, Lock, Server, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import ConfirmButton from "@/components/confirm-button";
@@ -10,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, GroupName, Groups, SettingsView, UpstreamTestResult } from "@/lib/api";
 
 type Msg = { error: boolean; text: string } | null;
@@ -27,23 +29,47 @@ export default function Settings() {
   if (!view) return <p className="text-muted-foreground">{error || "Chargement…"}</p>;
 
   return (
-    <div className="flex flex-col gap-10">
+    <div className="flex flex-col gap-5">
       <div>
-        <h1 className="text-lg font-semibold tracking-tight">Réglages</h1>
-        <p className="mt-1 max-w-2xl text-muted-foreground">
-          Les changements sont appliqués tout de suite, sans redémarrage. Ils sont enregistrés à part et remplacent la
-          valeur de <code>config.yaml</code> pour le groupe modifié ; « Rétablir » revient à <code>config.yaml</code>.
+        <h1 className="text-xl font-semibold tracking-tight">Réglages</h1>
+        <p className="mt-1 max-w-3xl text-muted-foreground">
+          Les changements sont appliqués tout de suite, sans redémarrage. Ils sont enregistrés à part et remplacent la valeur de{" "}
+          <code>config.yaml</code> pour le groupe modifié ; « Rétablir » revient à <code>config.yaml</code>.
         </p>
       </div>
-      <UpdateSection />
-      <UpstreamSection view={view} setView={setView} />
-      <LocalSection view={view} setView={setView} />
-      <FilterSection view={view} setView={setView} />
-      <CacheSection view={view} setView={setView} />
-      <LogSection view={view} setView={setView} />
-      <AccessSection view={view} setView={setView} />
-      <PasswordSection />
-      <InfraSection view={view} />
+      <Tabs defaultValue="general" className="gap-4">
+        <TabsList aria-label="Catégories de réglages" className="h-9 self-start overflow-x-auto">
+          <TabsTrigger value="general" className="gap-1.5 text-sm">
+            <SlidersHorizontal className="size-3.5" aria-hidden /> Général
+          </TabsTrigger>
+          <TabsTrigger value="dns" className="gap-1.5 text-sm">
+            <Server className="size-3.5" aria-hidden /> DNS
+          </TabsTrigger>
+          <TabsTrigger value="filtrage" className="gap-1.5 text-sm">
+            <ListFilter className="size-3.5" aria-hidden /> Filtrage et cache
+          </TabsTrigger>
+          <TabsTrigger value="acces" className="gap-1.5 text-sm">
+            <Lock className="size-3.5" aria-hidden /> Accès
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="general" className="flex flex-col gap-4">
+          <UpdateSection />
+          <PasswordSection />
+          <InfraSection view={view} />
+        </TabsContent>
+        <TabsContent value="dns" className="flex flex-col gap-4">
+          <UpstreamSection view={view} setView={setView} />
+          <LocalSection view={view} setView={setView} />
+        </TabsContent>
+        <TabsContent value="filtrage" className="flex flex-col gap-4">
+          <FilterSection view={view} setView={setView} />
+          <CacheSection view={view} setView={setView} />
+          <LogSection view={view} setView={setView} />
+        </TabsContent>
+        <TabsContent value="acces" className="flex flex-col gap-4">
+          <AccessSection view={view} setView={setView} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -109,7 +135,7 @@ function Section({
   below?: React.ReactNode;
 }) {
   return (
-    <section className="max-w-2xl border-t pt-5">
+    <section className="max-w-3xl rounded-xl border bg-card p-5">
       <div className="mb-3 flex items-center gap-2">
         <h2 className="text-sm font-semibold">{title}</h2>
         {g.overridden && <Badge>modifié depuis l&apos;interface</Badge>}
@@ -348,7 +374,7 @@ function PasswordSection() {
   }
 
   return (
-    <section className="max-w-2xl border-t pt-5">
+    <section className="max-w-3xl rounded-xl border bg-card p-5">
       <h2 className="mb-3 text-sm font-semibold">Mot de passe</h2>
       <form onSubmit={submit} className="flex flex-col gap-4">
         <Field label="Mot de passe actuel">
@@ -412,7 +438,7 @@ function InfraSection({ view }: { view: SettingsView }) {
   ];
 
   return (
-    <section className="max-w-2xl border-t pt-5">
+    <section className="max-w-3xl rounded-xl border bg-card p-5">
       <h2 className="mb-1 text-sm font-semibold">Infrastructure</h2>
       <p className="mb-3 text-muted-foreground">
         Ces réglages se changent depuis la <strong>console de la machine</strong> (menu « Adresses d&apos;écoute et HTTPS »), pas depuis cette

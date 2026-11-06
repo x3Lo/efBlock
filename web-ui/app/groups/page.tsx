@@ -63,7 +63,7 @@ export default function Groups() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-lg font-semibold tracking-tight">Groupes de clients</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Groupes de clients</h1>
         <p className="mt-1 max-w-2xl text-muted-foreground">
           Un groupe applique ses propres règles aux appareils qu&apos;il contient : aucun blocage, ou seulement certaines listes, avec des
           domaines autorisés ou bloqués en plus. Les appareils qui ne sont dans aucun groupe gardent les réglages par défaut.
@@ -78,7 +78,7 @@ export default function Groups() {
       {draft.length === 0 && <p className="text-muted-foreground">Aucun groupe pour l&apos;instant.</p>}
 
       {draft.map((g, i) => (
-        <section key={i} className="max-w-2xl border-t pt-5">
+        <section key={i} className="max-w-3xl rounded-xl border bg-card p-5">
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold">{g.name.trim() || "Nouveau groupe"}</h2>
             <Badge>{g.mode === "off" ? "aucun blocage" : "filtrage personnalisé"}</Badge>
@@ -168,7 +168,7 @@ export default function Groups() {
         </section>
       ))}
 
-      <div className="flex max-w-2xl flex-wrap items-center gap-2 border-t pt-5">
+      <div className="flex max-w-3xl flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" disabled={draft.length >= 30} onClick={() => setDraft((d) => [...d, emptyGroup()])}>
           Ajouter un groupe
         </Button>

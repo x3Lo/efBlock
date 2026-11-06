@@ -88,7 +88,7 @@ export default function UpdateSection() {
   }, []);
 
   return (
-    <section className="max-w-2xl border-t pt-5">
+    <section className="max-w-3xl rounded-xl border bg-card p-5">
       <h2 className="mb-1 text-sm font-semibold">Mises à jour</h2>
       <p className="mb-3 text-muted-foreground">
         efBlock vérifie la dernière version publiée sur GitHub. Ta configuration, ton mot de passe, tes listes et ton journal sont conservés.
