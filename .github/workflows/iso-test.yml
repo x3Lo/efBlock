@@ -1,0 +1,45 @@
+name: Test de l'ISO
+
+# Construit l'ISO et l'installe pour de vrai dans une machine virtuelle sans internet, puis démarre
+# le système installé et vérifie qu'efBlock répond. Lancé quand l'installateur, le paquet ou la
+# console changent, à la demande, et avant chaque publication (voir release.yml).
+on:
+  pull_request:
+    paths:
+      - "image/**"
+      - "packaging/**"
+      - "cmd/efblock-console/**"
+      - ".github/workflows/iso-test.yml"
+  workflow_dispatch:
+
+jobs:
+  installation:
+    name: Installation de l'ISO (machine virtuelle sans internet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Outils
+        run: sudo apt-get update && sudo apt-get install -y xorriso qemu-system-x86 bind9-dnsutils
+      - name: KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: Construction de l'ISO
+        run: image/build.sh 0.0.0-test
+      - name: Test d'installation
+        run: image/test-install.sh dist/efblock-*.iso
+      - name: Journaux
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-installation
+          path: dist/test-install/*.log
+          if-no-files-found: ignore

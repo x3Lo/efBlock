@@ -80,6 +80,10 @@ done
 in-target apt-get clean || true
 rm -rf /target/usr/share/doc/*/changelog* /target/usr/share/man/* /target/usr/share/info/* 2>/dev/null || true
 
+# --- Compte root verrouillé : son mot de passe d'installation est aléatoire et inconnu ---
+# La console (option 7) propose d'en choisir un au premier usage.
+in-target passwd -l root || echo "AVERTISSEMENT : verrouillage du compte root"
+
 # --- Console d'administration sur l'écran de la machine ---
 in-target systemctl enable efblock efblock-resolv efblock-console efblock-update.path
 

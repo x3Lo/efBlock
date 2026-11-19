@@ -32,7 +32,12 @@ jobs:
             exit 1
           fi
       - name: Outils
-        run: sudo apt-get update && sudo apt-get install -y xorriso
+        run: sudo apt-get update && sudo apt-get install -y xorriso qemu-system-x86 bind9-dnsutils
+      - name: KVM (machine virtuelle rapide pour le test d'installation)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
       - name: Tests
         run: go test ./...
       - name: Version
@@ -67,6 +72,15 @@ jobs:
             printf '%s' "$files" | grep -Eq "/efblock/kit/$d/.*\.deb" || { echo "::error::kit $d absent de l'ISO"; ok=0; }
           done
           [ "$ok" = 1 ]
+      - name: Test d'installation de l'ISO (machine virtuelle sans internet)
+        run: image/test-install.sh dist/efblock-*.iso
+      - name: Journaux du test d'installation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-installation
+          path: dist/test-install/*.log
+          if-no-files-found: ignore
       - name: Empreintes
         run: cd dist && sha256sum efblock_*.deb efblock-*.iso > SHA256SUMS && cat SHA256SUMS
       - name: Publier la version

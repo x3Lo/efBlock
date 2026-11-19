@@ -18,7 +18,7 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: Scripts (syntaxe)
         run: |
-          for f in deploy/install.sh packaging/build-deb.sh packaging/postinst packaging/prerm packaging/postrm image/build.sh image/kit.sh; do bash -n "$f"; done
+          for f in deploy/install.sh packaging/build-deb.sh packaging/postinst packaging/prerm packaging/postrm image/build.sh image/kit.sh image/test-install.sh; do bash -n "$f"; done
           sh -n image/files/late.sh
       - run: go vet ./...
       - run: go test -race ./...
